@@ -17,9 +17,8 @@ pub enum Edn<'a> {
     Vector(Vec<Edn<'a>>),
     Map(HashMap<Edn<'a>, Edn<'a>>),
     Set(HashSet<Edn<'a>>),
-    // TODO: Tagged
-    // TODO: handle comments ;;
-    // TODO: handle reader macro `#_`
+    // TODO: handle tagged elements
+    // TODO: handle comments like ;;
 }
 
 impl<'a> std::hash::Hash for Edn<'a> {
@@ -33,6 +32,16 @@ impl<'a> Eq for Edn<'a> {
     //     unimplemented!()
     // }
 }
+
+named!(
+    edn_discard_sequence<Option<Edn>>,
+    do_parse!(
+        alt!(
+            preceded!(tag!("#_"), recognize!(edn_any))
+                | ws!(preceded!(tag!("#_"), recognize!(edn_any)))
+        ) >> (None)
+    )
+);
 
 named!(edn_nil<crate::Edn>, do_parse!(tag!("nil") >> (Edn::Nil)));
 
@@ -51,9 +60,14 @@ named!(
     edn_int<crate::Edn>,
     do_parse!(
         i: map!(
-            pair!(
-                opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
-                digit1
+            alt!(
+                pair!(
+                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
+                    digit1
+                ) | ws!(pair!(
+                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
+                    digit1
+                ))
             ),
             |(sign, digits)| {
                 let i = if let Some(s) = sign {
@@ -71,15 +85,24 @@ named!(
 
                 Edn::Integer(i)
             }
-        ) >> (i)
+        )
+            >> not!(tag!(".")) // negative lookahead so we don't parse floats as ints
+            >> (i)
     )
 );
 
 named!(
     edn_float<crate::Edn>,
     do_parse!(
-        f: alt!(
-            pair!(recognize!(double), tag!("M")) => { |(d, _): (&[u8], &[u8])| Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap()) } |
+        // peek!(tag!(".")) >>
+        f: alt_complete!(
+            // ws!(pair!(recognize!(double), tag!("M"))) => { |(d, _): (&[u8], &[u8])|
+            //     Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
+            // } |
+            pair!(recognize!(double), tag!("M")) => { |(d, _): (&[u8], &[u8])|
+                Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
+            } |
+            ws!(double) => { |d| Edn::Float(d) } |
             double => { |d| Edn::Float(d) }
         ) >> (f)
     )
@@ -131,7 +154,13 @@ named!(
         tag!("(")
             >> elements: opt!(many1!(ws!(edn_any)))
             >> tag!(")")
-            >> (Edn::List(elements.unwrap_or_else(Vec::new)))
+            >> (Edn::List(
+                elements
+                    .unwrap_or_else(Vec::new)
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            ))
     )
 );
 
@@ -141,7 +170,13 @@ named!(
         alt!(tag!("[") | ws!(tag!("[")))
             >> elements: opt!(many1!(alt!(ws!(edn_any) | edn_any)))
             >> alt!(tag!("]") | ws!(tag!("]")))
-            >> (Edn::Vector(elements.unwrap_or_else(Vec::new)))
+            >> (Edn::Vector(
+                elements
+                    .unwrap_or_else(Vec::new)
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            ))
     )
 );
 
@@ -152,9 +187,12 @@ named!(
             >> map: opt!(fold_many1!(
                 pair!(alt!(ws!(edn_any) | edn_any), alt!(ws!(edn_any) | edn_any)),
                 HashMap::new(),
-                |mut acc: HashMap<_, _>, (k, v)| {
-                    acc.insert(k, v);
-                    acc
+                |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
+                    (Some(kk), Some(vv)) => {
+                        acc.insert(kk, vv);
+                        acc
+                    }
+                    _ => acc,
                 }
             ))
             >> alt!(tag!("}") | ws!(tag!("}")))
@@ -170,7 +208,10 @@ named!(
                 alt!(ws!(edn_any) | edn_any),
                 HashSet::new(),
                 |mut acc: HashSet<_>, v| {
-                    acc.insert(v);
+                    if let Some(actual_v) = v {
+                        acc.insert(actual_v);
+                    }
+
                     acc
                 }
             ))
@@ -180,19 +221,23 @@ named!(
 );
 
 named!(
-    edn_any<crate::Edn>,
-    alt!(
-        edn_nil
-            | edn_list
-            | edn_map
-            | edn_vector
-            | edn_set
-            | edn_bool
-            | edn_int
-            | edn_float
-            | edn_keyword
-            | edn_string
-            | edn_symbol // | edn_float
+    edn_any<Option<crate::Edn>>,
+    alt_complete!(
+        edn_discard_sequence
+            | edn_nil => { |n| Some(n) }
+            | edn_list => { |n| Some(n) }
+            | edn_map => { |n| Some(n) }
+            | edn_vector => { |n| Some(n) }
+            | edn_set => { |n| Some(n) }
+            | edn_int => { |n| Some(n) }
+            | edn_float => { |n| Some(n) }
+            | edn_bool => { |n| Some(n) }
+            | edn_keyword => { |n| Some(n) }
+            | edn_string => { |n| Some(n) }
+            | edn_symbol => { |n| Some(n) }
+
+
+
                          // | edn_char
     )
 );
@@ -524,7 +569,7 @@ mod tests {
 
     #[test]
     fn parses_nested_maps_values() {
-        let map_str = "{:a [1 2 3]}";
+        let map_str = "{:a [1 2 4.01]}";
         let map_res = edn_map(map_str.as_bytes());
         assert_eq!(
             map_res,
@@ -532,7 +577,7 @@ mod tests {
                 vec!().as_slice(),
                 Map(hashmap!(
                     Keyword("a".to_string()),
-                    Vector(vec!(Integer(1), Integer(2), Integer(3)))
+                    Vector(vec!(Integer(1), Integer(2), Float(4.01)))
                 ))
             ))
         );
@@ -617,6 +662,44 @@ mod tests {
     }
 
     #[test]
+    fn parses_discard_sequence() {
+        // only term is discarded results in
+        // an empty, but valid result
+        assert_eq!(edn_any(b"#_{:a :b :c :d}"), Ok((vec!().as_slice(), None)));
+
+        assert_eq!(
+            edn_any(b"[1 2 #_3 4]"),
+            Ok((
+                vec!().as_slice(),
+                Some(Vector(vec!(Integer(1), Integer(2), Integer(4))))
+            ))
+        );
+
+        // with weird nesting
+        assert_eq!(
+            edn_any(b"[1 2 #_[1 2 #_3] 4]"),
+            Ok((
+                vec!().as_slice(),
+                Some(Vector(vec!(Integer(1), Integer(2), Integer(4))))
+            ))
+        );
+
+        // with varied types
+        assert_eq!(
+            edn_map(b"{:a 1.01 #_:b #_38000 :c :d}"),
+            Ok((
+                vec!().as_slice(),
+                Map(hashmap!(
+                    Keyword("a".to_string()),
+                    Float(1.01),
+                    Keyword("c".to_string()),
+                    Keyword("d".to_string())
+                ))
+            ))
+        )
+    }
+
+    #[test]
     fn parses_a_real_one() {
         let mut edn = std::fs::File::open("./fixtures/deps.edn").unwrap();
         let mut buf = Vec::new();
@@ -631,7 +714,7 @@ mod tests {
             embedded_res,
             Ok((
                 vec!(10).as_slice(),
-                Map(hashmap!(
+                Some(Map(hashmap!(
                     Keyword("paths".to_string()),
                     Vector(vec!(String("resources"), String("src"))),
                     Keyword("deps".to_string()),
@@ -710,7 +793,7 @@ mod tests {
                             ),)
                         ))
                     ),)
-                ))
+                )))
             ))
         )
     }
