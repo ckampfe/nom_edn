@@ -1,5 +1,6 @@
 use nom::*;
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 
 #[derive(Debug, PartialEq)]
 pub enum Edn<'a> {
@@ -10,7 +11,8 @@ pub enum Edn<'a> {
     Symbol(String),
     Keyword(String),
     Integer(isize),
-    // Float(f64), TODO
+    Float(f64),
+    Decimal(rust_decimal::Decimal),
     List(Vec<Edn<'a>>),
     Vector(Vec<Edn<'a>>),
     Map(HashMap<Edn<'a>, Edn<'a>>),
@@ -34,15 +36,12 @@ impl<'a> Eq for Edn<'a> {
 
 named!(edn_nil<crate::Edn>, do_parse!(tag!("nil") >> (Edn::Nil)));
 
-const TRUEBYTES: &[u8] = b"true";
-const FALSEBYTES: &[u8] = b"false";
-
 named!(
     edn_bool<crate::Edn>,
     do_parse!(
         res: map!(alt!(tag!("true") | tag!("false")), |value| match value {
-            _ if value == TRUEBYTES => Edn::Bool(true),
-            _ if value == FALSEBYTES => Edn::Bool(false),
+            _ if value == b"true" => Edn::Bool(true),
+            _ if value == b"false" => Edn::Bool(false),
             _ => panic!("nonbool matched, definitely an error."),
         }) >> (res)
     )
@@ -73,6 +72,16 @@ named!(
                 Edn::Integer(i)
             }
         ) >> (i)
+    )
+);
+
+named!(
+    edn_float<crate::Edn>,
+    do_parse!(
+        f: alt!(
+            pair!(recognize!(double), tag!("M")) => { |(d, _): (&[u8], &[u8])| Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap()) } |
+            double => { |d| Edn::Float(d) }
+        ) >> (f)
     )
 );
 
@@ -180,6 +189,7 @@ named!(
             | edn_set
             | edn_bool
             | edn_int
+            | edn_float
             | edn_keyword
             | edn_string
             | edn_symbol // | edn_float
@@ -195,7 +205,9 @@ fn matches_identifier(c: u8) -> bool {
 mod tests {
     use super::Edn::*;
     use super::*;
+    use rust_decimal;
     use std::io::prelude::*;
+    use std::str::FromStr;
 
     macro_rules! hashmap {
         () => {
@@ -273,6 +285,53 @@ mod tests {
         let intstr = "1 ";
         let res = edn_int(intstr.as_bytes());
         assert_eq!(res, Ok((vec!(32).as_slice(), Integer(1))));
+    }
+
+    #[test]
+    fn parses_floats() {
+        assert_eq!(
+            edn_float("0.0 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(0.0)))
+        );
+        assert_eq!(
+            edn_float("-0.0 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(-0.0)))
+        );
+        assert_eq!(
+            edn_float("1.0 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(1.0)))
+        );
+        assert_eq!(
+            edn_float("-1.0 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(-1.0)))
+        );
+        assert_eq!(
+            edn_float("-1.2E5 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(-1.2E5)))
+        );
+        assert_eq!(
+            edn_float("-120000 ".as_bytes()),
+            Ok((vec!(32).as_slice(), Float(-1.2E5)))
+        );
+    }
+
+    #[test]
+    fn parses_decimals() {
+        assert_eq!(
+            edn_float("0.0M ".as_bytes()),
+            Ok((
+                vec!(32).as_slice(),
+                Decimal(rust_decimal::Decimal::from_str("0.0").unwrap())
+            ))
+        );
+
+        assert_eq!(
+            edn_float("1140141.1041040014014141M ".as_bytes()),
+            Ok((
+                vec!(32).as_slice(),
+                Decimal(rust_decimal::Decimal::from_str("1140141.1041040014014141").unwrap())
+            ))
+        );
     }
 
     #[test]

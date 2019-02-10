@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 nom = "4.2"
+rust_decimal = "0.11.0"
