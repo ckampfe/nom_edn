@@ -1,0 +1,19 @@
+{:paths ["resources" "src"]
+ :deps {org.clojure/clojure {:mvn/version "1.10.0"}
+        instaparse {:mvn/version "1.4.9"}
+        quil {:mvn/version "2.8.0"
+              :exclusions [com.lowagie/itext]}
+        com.hypirion/clj-xchart {:mvn/version "0.2.0"}
+        net.mikera/core.matrix {:mvn/version "0.62.0"}
+        net.mikera/vectorz-clj {:mvn/version "0.48.0"}
+        }
+ :aliases
+ {:more-mem {:jvm-opts ["-Xmx12G -Xms12G"]}
+  :test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "RELEASE"}}}
+  :runner
+  {:extra-deps {com.cognitect/test-runner
+                {:git/url "https://github.com/cognitect-labs/test-runner"
+                 :sha "76568540e7f40268ad2b646110f237a60295fa3c"}}
+   :main-opts ["-m" "cognitect.test-runner"
+               "-d" "test"]}}}
