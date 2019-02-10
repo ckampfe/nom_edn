@@ -1,6 +1,10 @@
 use nom::*;
-use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::{HashMap, HashSet};
+#[cfg(not(feature = "hashbrown"))]
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, PartialEq)]
 pub enum Edn<'a> {
@@ -256,11 +260,11 @@ mod tests {
 
     macro_rules! hashmap {
         () => {
-            std::collections::HashMap::new()
+            HashMap::new()
         };
         ( $($x:expr, $y:expr),* ) => {
             {
-                let mut hm = std::collections::HashMap::new();
+                let mut hm = HashMap::new();
 
                 $(
                     hm.insert($x, $y);
@@ -273,11 +277,11 @@ mod tests {
 
     macro_rules! hashset {
         () => {
-            std::collections::HashSet::new()
+            HashSet::new()
         };
         ( $($x:expr),* ) => {
             {
-                let mut hs = std::collections::HashSet::new();
+                let mut hs = HashSet::new();
 
                 $(
                     hs.insert($x);
