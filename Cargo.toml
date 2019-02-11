@@ -13,3 +13,10 @@ default = []
 nom = "4.2"
 rust_decimal = "0.11.0"
 hashbrown = { version = "0.1", optional = true }
+
+[dev-dependencies]
+criterion = "0.2"
+
+[[bench]]
+name = "bench"
+harness = false

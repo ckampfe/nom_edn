@@ -6,6 +6,12 @@ use hashbrown::{HashMap, HashSet};
 #[cfg(not(feature = "hashbrown"))]
 use std::collections::{HashMap, HashSet};
 
+type EdnParseResult<'a> = Result<(&'a [u8], Option<Edn<'a>>), nom::Err<&'a [u8]>>;
+
+pub fn parse_bytes(bytes: &[u8]) -> EdnParseResult {
+    edn_any(bytes)
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Edn<'a> {
     Nil,
