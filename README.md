@@ -60,6 +60,7 @@ What's built so far:
 - [ ] tests of streaming
 - [ ] better tests around namespaced keywords/symbols
 - [ ] real-world tests of a few real (large) source files
+- [ ] Investigate/port some of Clojure's reader tests: https://github.com/clojure/clojure/blob/master/test/clojure/test_clojure/reader.cljc
 - [ ] get rid of as many `.unwrap()`s as possible
 - [x] optional hashbrown for hashmaps/hashsets instead of stdlib
 - [ ] benchmarking for fun
