@@ -38,7 +38,7 @@ What's built so far:
 - [x] nil
 - [x] booleans
 - [x] strings
-- [ ] chars
+- [x] chars
 - [x] symbols
 - [x] keywords
 - [x] integers
@@ -50,6 +50,7 @@ What's built so far:
 - [ ] builtin tagged elements (inst, uuid, etc)
 - [ ] comments (;)
 - [x] discard
+- [ ] commas as whitespace
 - [ ] a real public API
 - [ ] real Rust trait implementations of `Hash`/`Eq` for `Edn` (stub impls right now)
 - [ ] user-defined tagged elements

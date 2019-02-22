@@ -17,7 +17,7 @@ pub enum Edn<'a> {
     Nil,
     Bool(bool),
     String(&'a str),
-    // Character(char), TODO
+    Character(char),
     Symbol(String),
     Keyword(String),
     Integer(isize),
@@ -104,11 +104,7 @@ named!(
 named!(
     edn_float<crate::Edn>,
     do_parse!(
-        // peek!(tag!(".")) >>
         f: alt_complete!(
-            // ws!(pair!(recognize!(double), tag!("M"))) => { |(d, _): (&[u8], &[u8])|
-            //     Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
-            // } |
             pair!(recognize!(double), tag!("M")) => { |(d, _): (&[u8], &[u8])|
                 Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
             } |
@@ -127,6 +123,23 @@ named!(
             })
             >> tag!("\"")
             >> (s)
+    )
+);
+
+named!(
+    edn_char<crate::Edn>,
+    do_parse!(
+        c: preceded!(
+            tag!("\\"),
+            alt!(
+              preceded!(char!('u'), hex_u32) => {|c| Edn::Character(std::char::from_u32(c).unwrap())} |
+              tag!("newline") => {|_| Edn::Character('\n') } |
+              tag!("return") => {|_| Edn::Character('\r') } |
+              tag!("space") => {|_| Edn::Character(' ') } |
+              tag!("tab") => {|_| Edn::Character('\t') } |
+              anychar => { |c| Edn::Character(c) }
+            )
+        ) >> (c)
     )
 );
 
@@ -177,16 +190,10 @@ named!(
 named!(
     edn_vector<crate::Edn>,
     do_parse!(
-        alt!(tag!("[") | ws!(tag!("[")))
-            >> elements: opt!(many1!(alt!(ws!(edn_any) | edn_any)))
-            >> alt!(tag!("]") | ws!(tag!("]")))
-            >> (Edn::Vector(
-                elements
-                    .unwrap_or_else(Vec::new)
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            ))
+        tag!("[")
+            >> elements: separated_list!(many1!(sp), edn_any)
+            >> tag!("]")
+            >> (Edn::Vector(elements.into_iter().flatten().collect()))
     )
 );
 
@@ -245,10 +252,7 @@ named!(
             | edn_keyword => { |n| Some(n) }
             | edn_string => { |n| Some(n) }
             | edn_symbol => { |n| Some(n) }
-
-
-
-                         // | edn_char
+            | edn_char => { |n| Some(n) }
     )
 );
 
@@ -427,6 +431,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_with_unicode_literals() {
+        let charstr1 = "\\u0065 ";
+        let charstr2 = "\\u0177 ";
+        let res1 = edn_char(charstr1.as_bytes());
+        let res2 = edn_char(charstr2.as_bytes());
+        assert_eq!(res1, Ok((vec!(32).as_slice(), Character('e'))));
+        assert_eq!(res2, Ok((vec!(32).as_slice(), Character('ŷ'))));
+    }
+
+    #[test]
+    fn parses_ascii_chars() {
+        let charstr1 = b"\\a";
+        let charstr2 = b"\\8";
+        let res1 = edn_char(charstr1);
+        let res2 = edn_char(charstr2);
+        assert_eq!(res1, Ok((vec!().as_slice(), Character('a'))));
+        assert_eq!(res2, Ok((vec!().as_slice(), Character('8'))));
+    }
+
+    #[test]
+    fn parses_chars_with_special_sequence_literals() {
+        let charstr_newline = "\\newline";
+        let res1 = edn_char(charstr_newline.as_bytes());
+        assert_eq!(res1, Ok((vec!().as_slice(), Character('\n'))));
+        let charstr_return = "\\return";
+        let res1 = edn_char(charstr_return.as_bytes());
+        assert_eq!(res1, Ok((vec!().as_slice(), Character('\r'))));
+        let charstr_space = "\\space";
+        let res1 = edn_char(charstr_space.as_bytes());
+        assert_eq!(res1, Ok((vec!().as_slice(), Character(' '))));
+        let charstr_tab = "\\tab";
+        let res1 = edn_char(charstr_tab.as_bytes());
+        assert_eq!(res1, Ok((vec!().as_slice(), Character('\t'))));
+    }
+
+    #[test]
     fn parses_homogenous_lists() {
         let list_str = "(:a :b :c)";
         let list_res = edn_list(list_str.as_bytes());
@@ -491,6 +531,13 @@ mod tests {
     }
 
     #[test]
+    fn lists_must_have_whitespace() {
+        let list_str = b"(\"hello\"abc)";
+        let list_res = edn_vector(list_str);
+        assert!(list_res.is_err());
+    }
+
+    #[test]
     fn parses_homogenous_vectors() {
         let vector_str = "[:a :b :c]";
         let vector_res = edn_vector(vector_str.as_bytes());
@@ -534,6 +581,13 @@ mod tests {
         let vector_str = "[]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(vector_res, Ok((vec!().as_slice(), Vector(vec!()))));
+    }
+
+    #[test]
+    fn vectors_must_have_whitespace() {
+        let vector_str = b"[\"hello\"abc]";
+        let vector_res = edn_vector(vector_str);
+        assert!(vector_res.is_err());
     }
 
     #[test]
