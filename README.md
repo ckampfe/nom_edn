@@ -1,6 +1,8 @@
 nom_edn
 =======
 
+[![CircleCI](https://circleci.com/gh/ckampfe/nom_edn.svg?style=svg)](https://circleci.com/gh/ckampfe/nom_edn)
+
 A nom parser for [edn](https://github.com/edn-format/edn)
 
 Warning: this is alpha-quality software.
