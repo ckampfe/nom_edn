@@ -50,7 +50,7 @@ What's built so far:
 - [x] maps
 - [x] sets
 - [ ] builtin tagged elements (inst, uuid, etc)
-- [ ] comments (;)
+- [x] comments (;)
 - [x] discard
 - [ ] commas as whitespace
 - [ ] a real public API

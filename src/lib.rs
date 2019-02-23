@@ -27,8 +27,13 @@ pub enum Edn<'a> {
     Vector(Vec<Edn<'a>>),
     Map(HashMap<Edn<'a>, Edn<'a>>),
     Set(HashSet<Edn<'a>>),
+    // Right now `Comment` is a marker value that follows the edn spec
+    // by ignoring any subsequent data, but in the future we could
+    // make a variant of it that captures the comment data itself.
+    // There could be circumstances where one would want to
+    // capture comment data.
+    Comment,
     // TODO: handle tagged elements
-    // TODO: handle comments like ;;
 }
 
 impl<'a> std::hash::Hash for Edn<'a> {
@@ -238,22 +243,45 @@ named!(
 );
 
 named!(
+    edn_comment<crate::Edn>,
+    do_parse!(
+        n: preceded!(
+            tag!(";"),
+            value!(
+                Edn::Comment,
+                alt!(
+                    complete!(alt!(
+                        take_until_and_consume!("\n") | take_until_and_consume!("\r\n")
+                    )) | rest
+                )
+            )
+        ) >> (n)
+    )
+);
+
+named!(
     edn_any<Option<crate::Edn>>,
     alt_complete!(
-        edn_discard_sequence
-            | edn_nil => { |n| Some(n) }
-            | edn_list => { |n| Some(n) }
-            | edn_map => { |n| Some(n) }
-            | edn_vector => { |n| Some(n) }
-            | edn_set => { |n| Some(n) }
-            | edn_int => { |n| Some(n) }
-            | edn_float => { |n| Some(n) }
-            | edn_bool => { |n| Some(n) }
-            | edn_keyword => { |n| Some(n) }
-            | edn_string => { |n| Some(n) }
-            | edn_symbol => { |n| Some(n) }
-            | edn_char => { |n| Some(n) }
+            edn_discard_sequence
+                | edn_nil => { |n| Some(n) }
+                | edn_list => { |n| Some(n) }
+                | edn_map => { |n| Some(n) }
+                | edn_vector => { |n| Some(n) }
+                | edn_set => { |n| Some(n) }
+                | edn_int => { |n| Some(n) }
+                | edn_float => { |n| Some(n) }
+                | edn_bool => { |n| Some(n) }
+                | edn_keyword => { |n| Some(n) }
+                | edn_string => { |n| Some(n) }
+                | edn_symbol => { |n| Some(n) }
+                | edn_char => { |n| Some(n) }
+                | edn_comment => { |_| None }
     )
+);
+
+named!(
+    edn_all<Vec<crate::Edn>>,
+    do_parse!(edn: complete!(many0!(edn_any)) >> (edn.into_iter().flatten().collect()))
 );
 
 fn matches_identifier(c: u8) -> bool {
@@ -761,6 +789,57 @@ mod tests {
                 ))
             ))
         )
+    }
+
+    #[test]
+    fn ignores_comments_in_various_positions() {
+        // with trailing newline
+        assert_eq!(
+            edn_comment(b";; this is a comment and should not appear\n"),
+            Ok((vec!().as_slice(), Comment))
+        );
+
+        // with trailing \r\n
+        assert_eq!(
+            edn_comment(b";; this is a comment and should not appear\r\n"),
+            Ok((vec!().as_slice(), Comment))
+        );
+
+        // preceding
+        assert_eq!(
+            edn_all(b";; this is a comment and should not appear\n[1 2 3]"),
+            Ok((
+                vec!().as_slice(),
+                vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
+            ))
+        );
+
+        // following
+        assert_eq!(
+            edn_all(b"[1 2 3];; this is a comment and should not appear"),
+            Ok((
+                vec!().as_slice(),
+                vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
+            ))
+        );
+
+        // middle
+        assert_eq!(
+            edn_all(b"[1 2 3];; this is a comment and should not appear\n[4 5 6]"),
+            Ok((
+                vec!().as_slice(),
+                vec![
+                    Vector(vec!(Integer(1), Integer(2), Integer(3))),
+                    Vector(vec!(Integer(4), Integer(5), Integer(6)))
+                ]
+            ))
+        );
+
+        // at EOF
+        assert_eq!(
+            edn_all(b";; this is a comment and should not appear"),
+            Ok((vec!().as_slice(), vec![]))
+        );
     }
 
     #[test]
