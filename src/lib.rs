@@ -48,6 +48,16 @@ impl<'a> Eq for Edn<'a> {
     // }
 }
 
+named!(pub space_or_comma, eat_separator!(&b" \t\r\n,"[..]));
+
+macro_rules! ws_or_comma (
+    ($i:expr, $($args:tt)*) => (
+        {
+            sep!($i, space_or_comma, $($args)*)
+        }
+    )
+);
+
 named!(
     edn_discard_sequence<Option<Edn>>,
     do_parse!(
@@ -179,9 +189,9 @@ named!(
 named!(
     edn_list<crate::Edn>,
     do_parse!(
-        tag!("(")
-            >> elements: opt!(many1!(ws!(edn_any)))
-            >> tag!(")")
+        ws_or_comma!(tag!("("))
+            >> elements: opt!(many1!(ws_or_comma!(edn_any)))
+            >> ws_or_comma!(tag!(")"))
             >> (Edn::List(
                 elements
                     .unwrap_or_else(Vec::new)
@@ -195,9 +205,9 @@ named!(
 named!(
     edn_vector<crate::Edn>,
     do_parse!(
-        tag!("[")
-            >> elements: separated_list!(many1!(sp), edn_any)
-            >> tag!("]")
+        ws_or_comma!(tag!("["))
+            >> elements: separated_list!(many1!(space_or_comma), ws_or_comma!(edn_any))
+            >> ws_or_comma!(tag!("]"))
             >> (Edn::Vector(elements.into_iter().flatten().collect()))
     )
 );
@@ -205,9 +215,9 @@ named!(
 named!(
     edn_map<crate::Edn>,
     do_parse!(
-        alt!(tag!("{") | ws!(tag!("{")))
+        ws_or_comma!(tag!("{"))
             >> map: opt!(fold_many1!(
-                pair!(alt!(ws!(edn_any) | edn_any), alt!(ws!(edn_any) | edn_any)),
+                pair!(ws_or_comma!(edn_any), ws_or_comma!(edn_any)),
                 HashMap::new(),
                 |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
                     (Some(kk), Some(vv)) => {
@@ -217,7 +227,7 @@ named!(
                     _ => acc,
                 }
             ))
-            >> alt!(tag!("}") | ws!(tag!("}")))
+            >> ws_or_comma!(tag!("}"))
             >> (Edn::Map(map.unwrap_or_else(HashMap::new)))
     )
 );
@@ -225,9 +235,9 @@ named!(
 named!(
     edn_set<crate::Edn>,
     do_parse!(
-        alt!(tag!("#{") | ws!(tag!("#{")))
+        ws_or_comma!(tag!("#{"))
             >> set: opt!(fold_many1!(
-                alt!(ws!(edn_any) | edn_any),
+                ws_or_comma!(edn_any),
                 HashSet::new(),
                 |mut acc: HashSet<_>, v| {
                     if let Some(actual_v) = v {
@@ -237,7 +247,7 @@ named!(
                     acc
                 }
             ))
-            >> alt!(tag!("}") | ws!(tag!("}")))
+            >> ws_or_comma!(tag!("}"))
             >> (Edn::Set(set.unwrap_or_else(HashSet::new)))
     )
 );
@@ -839,6 +849,50 @@ mod tests {
         assert_eq!(
             edn_all(b";; this is a comment and should not appear"),
             Ok((vec!().as_slice(), vec![]))
+        );
+    }
+
+    #[test]
+    fn commas_are_whitespace() {
+        // lists
+        assert_eq!(
+            edn_all(b"(,,1,, 2 ,, 3,,,,)"),
+            Ok((
+                vec![].as_bytes(),
+                vec![List(vec![Integer(1), Integer(2), Integer(3)])]
+            ))
+        );
+
+        // vectors
+        assert_eq!(
+            edn_all(b"[,,1,2,3     ,]"),
+            Ok((
+                vec![].as_bytes(),
+                vec![Vector(vec![Integer(1), Integer(2), Integer(3)])]
+            ))
+        );
+
+        // maps
+        assert_eq!(
+            edn_all(b",{,:a,1,,,,:b,2,}"),
+            Ok((
+                vec![].as_bytes(),
+                vec![Map(hashmap![
+                    Keyword("a".to_string()),
+                    Integer(1),
+                    Keyword("b".to_string()),
+                    Integer(2)
+                ])]
+            ))
+        );
+
+        // set
+        assert_eq!(
+            edn_all(b"#{,,,, 1 , 2, 3 ,         }"),
+            Ok((
+                vec![].as_bytes(),
+                vec![Set(hashset![Integer(1), Integer(2), Integer(3)])]
+            ))
         );
     }
 

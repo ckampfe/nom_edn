@@ -53,7 +53,7 @@ What's built so far:
 - [x] discard (#_)
 - [ ] builtin tagged elements (inst, uuid, etc)
 - [ ] user-defined tagged elements
-- [ ] commas as whitespace
+- [x] commas as whitespace
 - [ ] a real public API
 - [ ] real Rust trait implementations of `Hash`/`Eq` for `Edn` (stub impls right now)
 - [ ] tests to show UTF-8 compliance
