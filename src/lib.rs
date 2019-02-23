@@ -42,11 +42,7 @@ impl<'a> std::hash::Hash for Edn<'a> {
     }
 }
 
-impl<'a> Eq for Edn<'a> {
-    // fn cmp(self) -> bool {
-    //     unimplemented!()
-    // }
-}
+impl<'a> Eq for Edn<'a> {}
 
 named!(pub space_or_comma, eat_separator!(&b" \t\r\n,"[..]));
 
@@ -993,5 +989,75 @@ mod tests {
                 )))
             ))
         )
+    }
+
+    #[test]
+    fn equality() {
+        // Nil,
+        assert_eq!(Nil, Nil);
+        assert_ne!(Nil, Keyword("Nil".to_string()));
+
+        // Bool(bool),
+        assert_eq!(Bool(true), Bool(true));
+        assert_ne!(Bool(true), Bool(false));
+
+        // String(&'a str),
+        assert_eq!(String("a"), String("a"));
+        assert_ne!(String("a"), String("z"));
+
+        // Character(char),
+        assert_eq!(Character('a'), Character('a'));
+        assert_ne!(Character('a'), Character('b'));
+
+        // Symbol(String),
+        assert_eq!(Symbol("a".to_string()), Symbol("a".to_string()));
+        assert_ne!(Symbol("a".to_string()), Symbol("z".to_string()));
+
+        // Keyword(String),
+        assert_eq!(Keyword("a".to_string()), Keyword("a".to_string()));
+        assert_ne!(Keyword("a".to_string()), Keyword("z".to_string()));
+
+        // Integer(isize),
+        assert_eq!(Integer(1), Integer(1));
+        assert_ne!(Integer(1), Integer(2));
+
+        // Float(f64),
+        assert_eq!(Float(32.0), Float(32.0));
+        assert_ne!(Float(32.0), Float(84.0));
+
+        // Decimal(rust_decimal::Decimal),
+        assert_eq!(
+            rust_decimal::Decimal::from_str("32.0").unwrap(),
+            rust_decimal::Decimal::from_str("32.0").unwrap()
+        );
+        assert_ne!(
+            rust_decimal::Decimal::from_str("32.0").unwrap(),
+            rust_decimal::Decimal::from_str("19.9999999999").unwrap()
+        );
+
+        // List(Vec<Edn<'a>>),
+        assert_eq!(List(vec![]), List(vec![]));
+        assert_eq!(List(vec![Integer(1)]), List(vec![Integer(1)]));
+        assert_ne!(List(vec![Integer(1)]), List(vec![Float(1.0444444)]));
+
+        // Vector(Vec<Edn<'a>>),
+        assert_eq!(Vector(vec![]), Vector(vec![]));
+        assert_eq!(Vector(vec![Integer(1)]), Vector(vec![Integer(1)]));
+        assert_ne!(Vector(vec![Integer(1)]), List(vec![Integer(1)]));
+
+        // Map(HashMap<Edn<'a>, Edn<'a>>),
+        assert_eq!(
+            Map(hashmap!(Keyword("a".to_string()), Integer(1))),
+            Map(hashmap!(Keyword("a".to_string()), Integer(1)))
+        );
+        assert_ne!(
+            Map(hashmap!(Keyword("a".to_string()), Float(2.1))),
+            Map(hashmap!(Keyword("a".to_string()), Float(1.2)))
+        );
+
+        // Set(HashSet<Edn<'a>>),
+        assert_eq!(Set(hashset![Integer(1)]), Set(hashset![Integer(1)]));
+        assert_ne!(Set(hashset![Integer(1)]), Set(hashset![Integer(91391)]));
+        assert_ne!(Set(hashset![Integer(1)]), List(vec![]));
     }
 }
