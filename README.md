@@ -49,13 +49,13 @@ What's built so far:
 - [x] vectors
 - [x] maps
 - [x] sets
-- [ ] builtin tagged elements (inst, uuid, etc)
 - [x] comments (;)
-- [x] discard
+- [x] discard (#_)
+- [ ] builtin tagged elements (inst, uuid, etc)
+- [ ] user-defined tagged elements
 - [ ] commas as whitespace
 - [ ] a real public API
 - [ ] real Rust trait implementations of `Hash`/`Eq` for `Edn` (stub impls right now)
-- [ ] user-defined tagged elements
 - [ ] tests to show UTF-8 compliance
 - [ ] tests of streaming
 - [ ] better tests around namespaced keywords/symbols
