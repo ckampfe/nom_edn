@@ -287,7 +287,10 @@ named!(
 
 named!(
     edn_all<Vec<crate::Edn>>,
-    do_parse!(edn: complete!(many0!(edn_any)) >> (edn.into_iter().flatten().collect()))
+    do_parse!(edn: complete!(many0!(edn_any))
+              >> opt!(complete!(line_ending))
+              >> (edn.into_iter().flatten().collect())
+    )
 );
 
 fn matches_identifier(c: u8) -> bool {
@@ -1072,5 +1075,21 @@ mod tests {
         assert_eq!(Set(hashset![Integer(1)]), Set(hashset![Integer(1)]));
         assert_ne!(Set(hashset![Integer(1)]), Set(hashset![Integer(91391)]));
         assert_ne!(Set(hashset![Integer(1)]), List(vec![]));
+    }
+
+    #[test]
+    fn parses_ascii_stl_src() {
+        let mut edn = std::fs::File::open("./fixtures/ascii_stl.clj").unwrap();
+        let mut buf = Vec::new();
+        edn.read_to_end(&mut buf).unwrap();
+        let start = std::time::Instant::now();
+        let embedded_res = edn_all(&mut buf);
+        let end = std::time::Instant::now();
+
+        println!("ascii_stl_src time: {:?}", end - start);
+
+        let (remaining, result) = embedded_res.unwrap();
+        assert!(remaining.is_empty());
+        assert_eq!(result.len(), 6);
     }
 }
