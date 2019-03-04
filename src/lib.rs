@@ -291,7 +291,7 @@ named!(
 );
 
 fn matches_identifier(c: u8) -> bool {
-    is_alphanumeric(c) || c == b'-' || c == b'_' || c == b'.'
+    is_alphanumeric(c) || c == b'-' || c == b'_' || c == b'.' || c == b'+' || c == b'&'
 }
 
 #[cfg(test)]
@@ -622,6 +622,19 @@ mod tests {
         let vector_str = b"[\"hello\"abc]";
         let vector_res = edn_vector(vector_str);
         assert!(vector_res.is_err());
+    }
+
+    #[test]
+    fn vectors_can_have_varargs() {
+        let vector_str = b"[& args]";
+        let vector_res = edn_vector(vector_str);
+        assert_eq!(
+            vector_res,
+            Ok((
+                vec![].as_bytes(),
+                Vector(vec![Symbol("&".to_string()), Symbol("args".to_string())])
+            ))
+        );
     }
 
     #[test]
