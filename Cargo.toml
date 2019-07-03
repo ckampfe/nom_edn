@@ -10,7 +10,7 @@ edition = "2018"
 default = []
 
 [dependencies]
-nom = "4.2"
+nom = "5.0"
 rust_decimal = "1.0.1"
 hashbrown = { version = "0.5", optional = true }
 
