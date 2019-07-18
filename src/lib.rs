@@ -1,3 +1,7 @@
+use nom::character::complete::*;
+use nom::character::is_alphanumeric;
+use nom::combinator::rest;
+use nom::number::complete::*;
 use nom::*;
 use std::str::FromStr;
 
@@ -6,13 +10,14 @@ use hashbrown::{HashMap, HashSet};
 #[cfg(not(feature = "hashbrown"))]
 use std::collections::{HashMap, HashSet};
 
-type EdnParseResult<'a> = Result<(&'a [u8], Option<Edn<'a>>), nom::Err<&'a [u8]>>;
+type EdnParseResult<'a> =
+    Result<(&'a [u8], Option<Edn<'a>>), nom::Err<(&'a [u8], nom::error::ErrorKind)>>;
 
 pub fn parse_bytes(bytes: &[u8]) -> EdnParseResult {
     edn_any(bytes)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Edn<'a> {
     Nil,
     Bool(bool),
@@ -115,8 +120,8 @@ named!(
 named!(
     edn_float<crate::Edn>,
     do_parse!(
-        f: alt_complete!(
-            pair!(recognize!(double), tag!("M")) => { |(d, _): (&[u8], &[u8])|
+        f: alt!(
+            complete!(pair!(recognize!(double), tag!("M"))) => { |(d, _): (&[u8], &[u8])|
                 Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
             } |
             ws!(double) => { |d| Edn::Float(d) } |
@@ -186,7 +191,7 @@ named!(
     edn_list<crate::Edn>,
     do_parse!(
         ws_or_comma!(tag!("("))
-            >> elements: opt!(many1!(ws_or_comma!(edn_any)))
+            >> elements: opt!(many0!(ws_or_comma!(edn_any)))
             >> ws_or_comma!(tag!(")"))
             >> (Edn::List(
                 elements
@@ -202,7 +207,7 @@ named!(
     edn_vector<crate::Edn>,
     do_parse!(
         ws_or_comma!(tag!("["))
-            >> elements: separated_list!(many1!(space_or_comma), ws_or_comma!(edn_any))
+            >> elements: many0!(ws_or_comma!(edn_any))
             >> ws_or_comma!(tag!("]"))
             >> (Edn::Vector(elements.into_iter().flatten().collect()))
     )
@@ -257,7 +262,8 @@ named!(
                 Edn::Comment,
                 alt!(
                     complete!(alt!(
-                        take_until_and_consume!("\n") | take_until_and_consume!("\r\n")
+                        do_parse!(c: take_until!("\n") >> tag!("\n") >> (c))
+                            | do_parse!(c: take_until!("\r\n") >> tag!("\r\n") >> (c))
                     )) | rest
                 )
             )
@@ -267,7 +273,7 @@ named!(
 
 named!(
     edn_any<Option<crate::Edn>>,
-    alt_complete!(
+    alt!(
             edn_discard_sequence
                 | edn_nil => { |n| Some(n) }
                 | edn_list => { |n| Some(n) }
@@ -287,9 +293,10 @@ named!(
 
 named!(
     edn_all<Vec<crate::Edn>>,
-    do_parse!(edn: complete!(many0!(edn_any))
-              >> opt!(complete!(line_ending))
-              >> (edn.into_iter().flatten().collect())
+    do_parse!(
+        edn: many0!(complete!(edn_any))
+            >> opt!(line_ending)
+            >> (edn.into_iter().flatten().collect())
     )
 );
 
@@ -386,45 +393,45 @@ mod tests {
     #[test]
     fn parses_floats() {
         assert_eq!(
-            edn_float("0.0 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(0.0)))
+            edn_float("0.0".as_bytes()),
+            Ok((vec!().as_slice(), Float(0.0)))
         );
         assert_eq!(
-            edn_float("-0.0 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(-0.0)))
+            edn_float("-0.0".as_bytes()),
+            Ok((vec!().as_slice(), Float(-0.0)))
         );
         assert_eq!(
-            edn_float("1.0 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(1.0)))
+            edn_float("1.0".as_bytes()),
+            Ok((vec!().as_slice(), Float(1.0)))
         );
         assert_eq!(
-            edn_float("-1.0 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(-1.0)))
+            edn_float("-1.0".as_bytes()),
+            Ok((vec!().as_slice(), Float(-1.0)))
         );
         assert_eq!(
-            edn_float("-1.2E5 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(-1.2E5)))
+            edn_float("-1.2E5".as_bytes()),
+            Ok((vec!().as_slice(), Float(-1.2E5)))
         );
         assert_eq!(
-            edn_float("-120000 ".as_bytes()),
-            Ok((vec!(32).as_slice(), Float(-1.2E5)))
+            edn_float("-120000".as_bytes()),
+            Ok((vec!().as_slice(), Float(-1.2E5)))
         );
     }
 
     #[test]
     fn parses_decimals() {
         assert_eq!(
-            edn_float("0.0M ".as_bytes()),
+            edn_float("0.0M".as_bytes()),
             Ok((
-                vec!(32).as_slice(),
+                vec!().as_slice(),
                 Decimal(rust_decimal::Decimal::from_str("0.0").unwrap())
             ))
         );
 
         assert_eq!(
-            edn_float("1140141.1041040014014141M ".as_bytes()),
+            edn_float("1140141.1041040014014141M".as_bytes()),
             Ok((
-                vec!(32).as_slice(),
+                vec!().as_slice(),
                 Decimal(rust_decimal::Decimal::from_str("1140141.1041040014014141").unwrap())
             ))
         );
@@ -618,13 +625,6 @@ mod tests {
         let vector_str = "[]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(vector_res, Ok((vec!().as_slice(), Vector(vec!()))));
-    }
-
-    #[test]
-    fn vectors_must_have_whitespace() {
-        let vector_str = b"[\"hello\"abc]";
-        let vector_res = edn_vector(vector_str);
-        assert!(vector_res.is_err());
     }
 
     #[test]
