@@ -5,9 +5,6 @@ use nom::number::complete::*;
 use nom::*;
 use std::str::FromStr;
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::{HashMap, HashSet};
-#[cfg(not(feature = "hashbrown"))]
 use std::collections::{HashMap, HashSet};
 
 type EdnParseResult<'a> =

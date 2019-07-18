@@ -4,15 +4,9 @@ version = "0.1.0"
 authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
-[features]
- # change to ["hashbrown"] if you want hashbrown hashmaps/hashsets
- # instead of stdlib
-default = []
-
 [dependencies]
 nom = "5.0"
 rust_decimal = "1.0.1"
-hashbrown = { version = "0.5", optional = true }
 
 [dev-dependencies]
 criterion = "0.2"
