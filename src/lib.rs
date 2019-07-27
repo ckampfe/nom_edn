@@ -57,16 +57,6 @@ macro_rules! ws_or_comma (
     )
 );
 
-// named!(
-//     edn_discard_sequence<Option<Edn>>,
-//     do_parse!(
-//         alt!(
-//             preceded!(tag!("#_"), recognize!(edn_any))
-//                 | ws!(preceded!(tag!("#_"), recognize!(edn_any)))
-//         ) >> (None)
-//     )
-// );
-
 fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>> {
     let (s, _) = nom::sequence::preceded(
         nom::bytes::complete::tag("#_"),
@@ -140,18 +130,6 @@ named!(
     )
 );
 
-// named!(
-//     edn_string<crate::Edn>,
-//     do_parse!(
-//         tag!("\"")
-//             >> s: map!(escaped!(none_of!("\"\\"), '\\', one_of!("\"ntr\\")), |s| {
-//                 Edn::String(std::str::from_utf8(s).unwrap())
-//             })
-//             >> tag!("\"")
-//             >> (s)
-//     )
-// );
-
 fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     let (s, _) = nom::bytes::complete::tag("\"")(s)?;
     let (s, string) = nom::combinator::map(
@@ -184,20 +162,6 @@ named!(
     )
 );
 
-// named!(
-//     edn_keyword<crate::Edn>,
-//     do_parse!(
-//         tag!(":")
-//             >> namespace: opt!(pair!(take_while1!(matches_identifier), tag!("/")))
-//             >> kws: take_while1!(matches_identifier)
-//             >> (if let Some((ns, slash)) = namespace {
-//                 Edn::Keyword(std::string::String::from_utf8(vec![ns, slash, kws].concat()).unwrap())
-//             } else {
-//                 Edn::Keyword(std::string::String::from_utf8(kws.to_vec()).unwrap())
-//             })
-//     )
-// );
-
 fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     let (s, _) = nom::bytes::complete::tag(":")(s)?;
 
@@ -220,20 +184,6 @@ fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
         ))
     }
 }
-
-// named!(
-//     edn_symbol<crate::Edn>,
-//     do_parse!(
-//         peek!(not!(tag!(":")))
-//             >> namespace: opt!(pair!(take_while1!(matches_identifier), tag!("/")))
-//             >> sym: take_while1!(matches_identifier)
-//             >> (if let Some((ns, slash)) = namespace {
-//                 Edn::Symbol(std::string::String::from_utf8(vec![ns, slash, sym].concat()).unwrap())
-//             } else {
-//                 Edn::Symbol(std::string::String::from_utf8(sym.to_vec()).unwrap())
-//             })
-//     )
-// );
 
 fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     nom::combinator::peek(nom::combinator::not(nom::bytes::complete::tag(":")))(s)?;
@@ -388,26 +338,6 @@ named!(
 // 
 //     Ok((s, c))
 // }
-
-// named!(
-//     edn_any<Option<crate::Edn>>,
-//     alt!(
-//             edn_discard_sequence
-//                 | edn_nil => { |n| Some(n) }
-//                 | edn_list => { |n| Some(n) }
-//                 | edn_map => { |n| Some(n) }
-//                 | edn_vector => { |n| Some(n) }
-//                 | edn_set => { |n| Some(n) }
-//                 | edn_int => { |n| Some(n) }
-//                 | edn_float => { |n| Some(n) }
-//                 | edn_bool => { |n| Some(n) }
-//                 | edn_keyword => { |n| Some(n) }
-//                 | edn_string => { |n| Some(n) }
-//                 | edn_symbol => { |n| Some(n) }
-//                 | edn_char => { |n| Some(n) }
-//                 | edn_comment => { |_| None }
-//     )
-// );
 
 fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
     let (s, edn) = nom::branch::alt((
