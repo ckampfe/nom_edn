@@ -71,16 +71,21 @@ fn edn_nil(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     Ok((s, Edn::Nil))
 }
 
-named!(
-    edn_bool<crate::Edn>,
-    do_parse!(
-        res: map!(alt!(tag!("true") | tag!("false")), |value| match value {
+fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, v) = nom::combinator::map(
+        nom::branch::alt((
+            nom::bytes::complete::tag("true"),
+            nom::bytes::complete::tag("false"),
+        )),
+        |value| match value {
             _ if value == b"true" => Edn::Bool(true),
             _ if value == b"false" => Edn::Bool(false),
             _ => panic!("nonbool matched, definitely an error."),
-        }) >> (res)
-    )
-);
+        },
+    )(s)?;
+
+    Ok((s, v))
+}
 
 named!(
     edn_int<crate::Edn>,
@@ -231,10 +236,10 @@ named!(
 //         nom::bytes::complete::tag(","),
 //         nom::bytes::complete::tag("\r\n"),
 //     ))(s)?;
-// 
+//
 //     Ok((s, b))
 // }
-// 
+//
 // fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
 //     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
 //     let (s, _) = nom::bytes::complete::tag("(")(s)?;
@@ -246,7 +251,7 @@ named!(
 //     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
 //     let (s, _) = nom::bytes::complete::tag(")")(s)?;
 //     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
-// 
+//
 //     Ok((
 //         s,
 //         Edn::List(
@@ -335,7 +340,7 @@ named!(
 //             nom::sequence::terminated(not_line_ending, line_ending),
 //         ),
 //     )(s)?;
-// 
+//
 //     Ok((s, c))
 // }
 
@@ -374,17 +379,17 @@ named!(
 //     //     nom::multi::many1(whitespace),
 //     //     edn_any,
 //     // ))(s)?;
-// 
+//
 //     // let (s, edn) = nom::multi::many1(nom::sequence::terminated(
 //     //     edn_any,
 //     //     nom::multi::many1(whitespace),
 //     // ))(s)?;
 //     let (s, edn) = nom::multi::many0(nom::combinator::complete(edn_any))(s)?;
-// 
+//
 //     let (s, _) = nom::combinator::opt(line_ending)(s)?;
-// 
+//
 //     // let (s, _) = nom::combinator::opt(nom::multi::many1(whitespace))(s)?;
-// 
+//
 //     Ok((s, edn.into_iter().flatten().collect()))
 // }
 
