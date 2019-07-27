@@ -150,22 +150,31 @@ fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     Ok((s, string))
 }
 
-named!(
-    edn_char<crate::Edn>,
-    do_parse!(
-        c: preceded!(
-            tag!("\\"),
-            alt!(
-              preceded!(char!('u'), hex_u32) => {|c| Edn::Character(std::char::from_u32(c).unwrap())} |
-              tag!("newline") => {|_| Edn::Character('\n') } |
-              tag!("return") => {|_| Edn::Character('\r') } |
-              tag!("space") => {|_| Edn::Character(' ') } |
-              tag!("tab") => {|_| Edn::Character('\t') } |
-              anychar => { |c| Edn::Character(c) }
-            )
-        ) >> (c)
-    )
-);
+fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, c) = nom::sequence::preceded(
+        nom::bytes::complete::tag("\\"),
+        nom::branch::alt((
+            nom::combinator::map(
+                nom::sequence::preceded(
+                    nom::character::complete::char('u'),
+                    nom::number::complete::hex_u32,
+                ),
+                |c| Edn::Character(unsafe { std::char::from_u32_unchecked(c) }),
+            ),
+            nom::combinator::map(nom::bytes::complete::tag("newline"), |_| {
+                Edn::Character('\n')
+            }),
+            nom::combinator::map(nom::bytes::complete::tag("return"), |_| {
+                Edn::Character('\r')
+            }),
+            nom::combinator::map(nom::bytes::complete::tag("space"), |_| Edn::Character(' ')),
+            nom::combinator::map(nom::bytes::complete::tag("tab"), |_| Edn::Character('\t')),
+            nom::combinator::map(nom::character::complete::anychar, |c| Edn::Character(c)),
+        )),
+    )(s)?;
+
+    Ok((s, c))
+}
 
 fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     let (s, _) = nom::bytes::complete::tag(":")(s)?;
