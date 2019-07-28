@@ -192,56 +192,15 @@ fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     }
 }
 
-named!(
-    edn_list<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("("))
-            >> elements: opt!(many0!(ws_or_comma!(edn_any)))
-            >> ws_or_comma!(tag!(")"))
-            >> (Edn::List(
-                elements
-                    .unwrap_or_else(Vec::new)
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            ))
-    )
-);
+fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("(")(s)?;
 
-// fn whitespace(s: &[u8]) -> IResult<&[u8], &[u8]> {
-//     let (s, b) = alt((
-//         tag(" "),
-//         tag("\n"),
-//         tag(","),
-//         tag("\r\n"),
-//     ))(s)?;
-//
-//     Ok((s, b))
-// }
-//
-// fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-//     let (s, _) = many0(space_or_comma)(s)?;
-//     let (s, _) = tag("(")(s)?;
-//     let (s, _) = many0(space_or_comma)(s)?;
-//     let (s, elements) = opt(nom::multi::separated_list(
-//         many0(space_or_comma),
-//         edn_any,
-//     ))(s)?;
-//     let (s, _) = many0(space_or_comma)(s)?;
-//     let (s, _) = tag(")")(s)?;
-//     let (s, _) = many0(space_or_comma)(s)?;
-//
-//     Ok((
-//         s,
-//         Edn::List(
-//             elements
-//                 .unwrap_or_else(Vec::new)
-//                 .into_iter()
-//                 .flatten()
-//                 .collect(),
-//         ),
-//     ))
-// }
+    let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
+
+    let (s, _) = tag(")")(s)?;
+
+    Ok((s, Edn::List(elements.into_iter().flatten().collect())))
+}
 
 fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     let (s, _) = tag("[")(s)?;
@@ -345,8 +304,12 @@ fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
 }
 
 fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
-    let (s, edn) = many0(complete(edn_any))(s)?;
-    let (s, _) = opt(line_ending)(s)?;
+    let (s, edn) = many0(delimited(
+        opt(many0(line_ending)),
+        complete(edn_any),
+        opt(many0(line_ending)),
+    ))(s)?;
+
     Ok((s, edn.into_iter().flatten().collect()))
 }
 
