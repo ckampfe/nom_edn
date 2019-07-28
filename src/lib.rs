@@ -1,7 +1,11 @@
-use nom::character::complete::*;
+use nom::branch::alt;
+use nom::bytes::complete::{escaped, tag, take_until, take_while1};
+use nom::character::complete::{anychar, char, digit1, line_ending, none_of, one_of};
 use nom::character::is_alphanumeric;
-use nom::combinator::rest;
-use nom::number::complete::*;
+use nom::combinator::{complete, map, not, opt, peek, recognize, rest, value};
+use nom::multi::{fold_many1, many0};
+use nom::number::complete::{double, hex_u32};
+use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::*;
 use std::str::FromStr;
 
@@ -48,254 +52,251 @@ impl<'a> Eq for Edn<'a> {}
 
 named!(pub space_or_comma, eat_separator!(&b" \t\r\n,"[..]));
 
-macro_rules! ws_or_comma (
-    ($i:expr, $($args:tt)*) => (
-        {
-            sep!($i, space_or_comma, $($args)*)
-        }
-    )
-);
+fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>> {
+    let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
 
-named!(
-    edn_discard_sequence<Option<Edn>>,
-    do_parse!(
-        alt!(
-            preceded!(tag!("#_"), recognize!(edn_any))
-                | ws!(preceded!(tag!("#_"), recognize!(edn_any)))
-        ) >> (None)
-    )
-);
+    Ok((s, None))
+}
 
-named!(edn_nil<crate::Edn>, do_parse!(tag!("nil") >> (Edn::Nil)));
+fn edn_nil(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("nil")(s)?;
+    Ok((s, Edn::Nil))
+}
 
-named!(
-    edn_bool<crate::Edn>,
-    do_parse!(
-        res: map!(alt!(tag!("true") | tag!("false")), |value| match value {
-            _ if value == b"true" => Edn::Bool(true),
-            _ if value == b"false" => Edn::Bool(false),
-            _ => panic!("nonbool matched, definitely an error."),
-        }) >> (res)
-    )
-);
+fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, v) = map(alt((tag("true"), tag("false"))), |value| match value {
+        _ if value == b"true" => Edn::Bool(true),
+        _ if value == b"false" => Edn::Bool(false),
+        _ => panic!("nonbool matched, definitely an error."),
+    })(s)?;
 
-named!(
-    edn_int<crate::Edn>,
-    do_parse!(
-        i: map!(
-            alt!(
-                pair!(
-                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
-                    digit1
-                ) | ws!(pair!(
-                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
-                    digit1
-                ))
-            ),
-            |(sign, digits)| {
-                let i = if let Some(s) = sign {
-                    let nstr = std::str::from_utf8(digits).unwrap();
-                    let n = nstr.parse::<isize>().unwrap();
-                    if s == b"-" {
-                        -n
-                    } else {
-                        n
-                    }
+    Ok((s, v))
+}
+
+fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, i) = map(
+        pair(opt(alt((tag("+"), tag("-")))), digit1),
+        |(sign, digits)| {
+            let i = if let Some(s) = sign {
+                let nstr = std::str::from_utf8(digits).unwrap();
+                let n = nstr.parse::<isize>().unwrap();
+                if s == b"-" {
+                    -n
                 } else {
-                    let nstr = std::str::from_utf8(digits).unwrap();
-                    nstr.parse::<isize>().unwrap()
-                };
-
-                Edn::Integer(i)
-            }
-        )
-            >> not!(tag!(".")) // negative lookahead so we don't parse floats as ints
-            >> (i)
-    )
-);
-
-named!(
-    edn_float<crate::Edn>,
-    do_parse!(
-        f: alt!(
-            complete!(pair!(recognize!(double), tag!("M"))) => { |(d, _): (&[u8], &[u8])|
-                Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
-            } |
-            ws!(double) => { |d| Edn::Float(d) } |
-            double => { |d| Edn::Float(d) }
-        ) >> (f)
-    )
-);
-
-named!(
-    edn_string<crate::Edn>,
-    do_parse!(
-        tag!("\"")
-            >> s: map!(escaped!(none_of!("\"\\"), '\\', one_of!("\"ntr\\")), |s| {
-                Edn::String(std::str::from_utf8(s).unwrap())
-            })
-            >> tag!("\"")
-            >> (s)
-    )
-);
-
-named!(
-    edn_char<crate::Edn>,
-    do_parse!(
-        c: preceded!(
-            tag!("\\"),
-            alt!(
-              preceded!(char!('u'), hex_u32) => {|c| Edn::Character(std::char::from_u32(c).unwrap())} |
-              tag!("newline") => {|_| Edn::Character('\n') } |
-              tag!("return") => {|_| Edn::Character('\r') } |
-              tag!("space") => {|_| Edn::Character(' ') } |
-              tag!("tab") => {|_| Edn::Character('\t') } |
-              anychar => { |c| Edn::Character(c) }
-            )
-        ) >> (c)
-    )
-);
-
-named!(
-    edn_keyword<crate::Edn>,
-    do_parse!(
-        tag!(":")
-            >> namespace: opt!(pair!(take_while1!(matches_identifier), tag!("/")))
-            >> kws: take_while1!(matches_identifier)
-            >> (if let Some((ns, slash)) = namespace {
-                Edn::Keyword(std::string::String::from_utf8(vec![ns, slash, kws].concat()).unwrap())
-            } else {
-                Edn::Keyword(std::string::String::from_utf8(kws.to_vec()).unwrap())
-            })
-    )
-);
-
-named!(
-    edn_symbol<crate::Edn>,
-    do_parse!(
-        peek!(not!(tag!(":")))
-            >> namespace: opt!(pair!(take_while1!(matches_identifier), tag!("/")))
-            >> sym: take_while1!(matches_identifier)
-            >> (if let Some((ns, slash)) = namespace {
-                Edn::Symbol(std::string::String::from_utf8(vec![ns, slash, sym].concat()).unwrap())
-            } else {
-                Edn::Symbol(std::string::String::from_utf8(sym.to_vec()).unwrap())
-            })
-    )
-);
-
-named!(
-    edn_list<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("("))
-            >> elements: opt!(many0!(ws_or_comma!(edn_any)))
-            >> ws_or_comma!(tag!(")"))
-            >> (Edn::List(
-                elements
-                    .unwrap_or_else(Vec::new)
-                    .into_iter()
-                    .flatten()
-                    .collect()
-            ))
-    )
-);
-
-named!(
-    edn_vector<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("["))
-            >> elements: many0!(ws_or_comma!(edn_any))
-            >> ws_or_comma!(tag!("]"))
-            >> (Edn::Vector(elements.into_iter().flatten().collect()))
-    )
-);
-
-named!(
-    edn_map<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("{"))
-            >> map: opt!(fold_many1!(
-                pair!(ws_or_comma!(edn_any), ws_or_comma!(edn_any)),
-                HashMap::new(),
-                |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
-                    (Some(kk), Some(vv)) => {
-                        acc.insert(kk, vv);
-                        acc
-                    }
-                    _ => acc,
+                    n
                 }
-            ))
-            >> ws_or_comma!(tag!("}"))
-            >> (Edn::Map(map.unwrap_or_else(HashMap::new)))
-    )
-);
+            } else {
+                let nstr = std::str::from_utf8(digits).unwrap();
+                nstr.parse::<isize>().unwrap()
+            };
 
-named!(
-    edn_set<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("#{"))
-            >> set: opt!(fold_many1!(
-                ws_or_comma!(edn_any),
-                HashSet::new(),
-                |mut acc: HashSet<_>, v| {
-                    if let Some(actual_v) = v {
-                        acc.insert(actual_v);
-                    }
+            Edn::Integer(i)
+        },
+    )(s)?;
 
-                    acc
-                }
-            ))
-            >> ws_or_comma!(tag!("}"))
-            >> (Edn::Set(set.unwrap_or_else(HashSet::new)))
-    )
-);
+    let (s, _) = not(tag("."))(s)?;
 
-named!(
-    edn_comment<crate::Edn>,
-    do_parse!(
-        n: preceded!(
-            tag!(";"),
-            value!(
-                Edn::Comment,
-                alt!(
-                    complete!(alt!(
-                        do_parse!(c: take_until!("\n") >> tag!("\n") >> (c))
-                            | do_parse!(c: take_until!("\r\n") >> tag!("\r\n") >> (c))
-                    )) | rest
+    Ok((s, i))
+}
+
+fn edn_float(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, f) = alt((
+        map(
+            pair(recognize(double), tag("M")),
+            |(d, _): (&[u8], &[u8])| {
+                Edn::Decimal(
+                    rust_decimal::Decimal::from_str(unsafe { std::str::from_utf8_unchecked(d) })
+                        .unwrap(),
                 )
-            )
-        ) >> (n)
-    )
-);
+            },
+        ),
+        map(double, |d| Edn::Float(d)),
+    ))(s)?;
 
-named!(
-    edn_any<Option<crate::Edn>>,
-    alt!(
-            edn_discard_sequence
-                | edn_nil => { |n| Some(n) }
-                | edn_list => { |n| Some(n) }
-                | edn_map => { |n| Some(n) }
-                | edn_vector => { |n| Some(n) }
-                | edn_set => { |n| Some(n) }
-                | edn_int => { |n| Some(n) }
-                | edn_float => { |n| Some(n) }
-                | edn_bool => { |n| Some(n) }
-                | edn_keyword => { |n| Some(n) }
-                | edn_string => { |n| Some(n) }
-                | edn_symbol => { |n| Some(n) }
-                | edn_char => { |n| Some(n) }
-                | edn_comment => { |_| None }
-    )
-);
+    Ok((s, f))
+}
 
-named!(
-    edn_all<Vec<crate::Edn>>,
-    do_parse!(
-        edn: many0!(complete!(edn_any))
-            >> opt!(line_ending)
-            >> (edn.into_iter().flatten().collect())
-    )
-);
+fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("\"")(s)?;
+    let (s, string) = map(escaped(none_of("\"\\"), '\\', one_of("\"ntr\\")), |s| {
+        Edn::String(std::str::from_utf8(s).unwrap())
+    })(s)?;
+    let (s, _) = tag("\"")(s)?;
+
+    Ok((s, string))
+}
+
+fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, c) = preceded(
+        tag("\\"),
+        alt((
+            map(preceded(char('u'), hex_u32), |c| {
+                Edn::Character(unsafe { std::char::from_u32_unchecked(c) })
+            }),
+            map(tag("newline"), |_| Edn::Character('\n')),
+            map(tag("return"), |_| Edn::Character('\r')),
+            map(tag("space"), |_| Edn::Character(' ')),
+            map(tag("tab"), |_| Edn::Character('\t')),
+            map(anychar, |c| Edn::Character(c)),
+        )),
+    )(s)?;
+
+    Ok((s, c))
+}
+
+fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag(":")(s)?;
+
+    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let (s, namespace) = optional_namespace(s)?;
+    let (s, sym) = take_while1(matches_identifier)(s)?;
+
+    if let Some((ns, slash)) = namespace {
+        Ok((
+            s,
+            Edn::Keyword(std::string::String::from_utf8(vec![ns, slash, sym].concat()).unwrap()),
+        ))
+    } else {
+        Ok((
+            s,
+            Edn::Keyword(std::string::String::from_utf8(sym.to_vec()).unwrap()),
+        ))
+    }
+}
+
+fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    peek(not(tag(":")))(s)?;
+
+    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let (s, namespace) = optional_namespace(s)?;
+    let (s, sym) = take_while1(matches_identifier)(s)?;
+
+    if let Some((ns, slash)) = namespace {
+        Ok((
+            s,
+            Edn::Symbol(std::string::String::from_utf8(vec![ns, slash, sym].concat()).unwrap()),
+        ))
+    } else {
+        Ok((
+            s,
+            Edn::Symbol(std::string::String::from_utf8(sym.to_vec()).unwrap()),
+        ))
+    }
+}
+
+fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("(")(s)?;
+
+    let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
+
+    let (s, _) = tag(")")(s)?;
+
+    Ok((s, Edn::List(elements.into_iter().flatten().collect())))
+}
+
+fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("[")(s)?;
+
+    let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
+
+    let (s, _) = tag("]")(s)?;
+
+    Ok((s, Edn::Vector(elements.into_iter().flatten().collect())))
+}
+
+fn edn_map(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("{")(s)?;
+
+    let (s, map) = opt(fold_many1(
+        pair(
+            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+        ),
+        HashMap::new(),
+        |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
+            (Some(kk), Some(vv)) => {
+                acc.insert(kk, vv);
+                acc
+            }
+            _ => acc,
+        },
+    ))(s)?;
+
+    let (s, _) = tag("}")(s)?;
+
+    Ok((s, Edn::Map(map.unwrap_or_else(HashMap::new))))
+}
+
+fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("#{")(s)?;
+
+    let (s, set) = opt(fold_many1(
+        delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+        HashSet::new(),
+        |mut acc: HashSet<_>, v| {
+            if let Some(actual_v) = v {
+                acc.insert(actual_v);
+            }
+
+            acc
+        },
+    ))(s)?;
+
+    let (s, _) = tag("}")(s)?;
+
+    Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
+}
+
+fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, c) = preceded(
+        tag(";"),
+        value(
+            Edn::Comment,
+            alt((
+                alt((
+                    terminated(take_until("\n"), tag("\n")),
+                    terminated(take_until("\r\n"), tag("\r\n")),
+                )),
+                rest,
+            )),
+        ),
+    )(s)?;
+
+    Ok((s, c))
+}
+
+fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
+    let (s, edn) = alt((
+        edn_discard_sequence,
+        map(edn_nil, |n| Some(n)),
+        map(edn_list, |n| Some(n)),
+        map(edn_map, |n| Some(n)),
+        map(edn_vector, |n| Some(n)),
+        map(edn_set, |n| Some(n)),
+        map(edn_int, |n| Some(n)),
+        map(edn_float, |n| Some(n)),
+        map(edn_bool, |n| Some(n)),
+        map(edn_keyword, |n| Some(n)),
+        map(edn_string, |n| Some(n)),
+        map(edn_symbol, |n| Some(n)),
+        map(edn_char, |n| Some(n)),
+        map(edn_comment, |_| None),
+    ))(s)?;
+
+    Ok((s, edn))
+}
+
+fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
+    let (s, _) = opt(space_or_comma)(s)?;
+
+    let (s, edn) = many0(delimited(
+        opt(many0(line_ending)),
+        complete(edn_any),
+        opt(many0(line_ending)),
+    ))(s)?;
+
+    Ok((s, edn.into_iter().flatten().collect()))
+}
 
 fn matches_identifier(c: u8) -> bool {
     is_alphanumeric(c) || c == b'-' || c == b'_' || c == b'.' || c == b'+' || c == b'&'
@@ -773,6 +774,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_sets_with_leading_whitespace() {
+        let set_str = "#{,,,1 2 5}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_sets_with_trailing_whitespace() {
+        let set_str = "#{1 2 5,, ,}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_sets_with_leading_and_trailing_whitespace() {
+        let set_str = "#{ ,,      ,,   1 2 5,, ,}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
+            ))
+        );
+    }
+
+    #[test]
     fn parses_discard_sequence() {
         // only term is discarded results in
         // an empty, but valid result
@@ -826,7 +866,7 @@ mod tests {
 
         // preceding
         assert_eq!(
-            edn_all(b";; this is a comment and should not appear\n[1 2 3]"),
+            edn_all(b";; this is a comment and should not appear\n[,,, 1,, 2 3    ,,]"),
             Ok((
                 vec!().as_slice(),
                 vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
@@ -835,7 +875,7 @@ mod tests {
 
         // following
         assert_eq!(
-            edn_all(b"[1 2 3];; this is a comment and should not appear"),
+            edn_all(b"[  1, 2, 3, ,,,];; this is a comment and should not appear"),
             Ok((
                 vec!().as_slice(),
                 vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
