@@ -1,11 +1,11 @@
 use nom::branch::alt;
-use nom::bytes::complete::{escaped, tag, take_while1};
+use nom::bytes::complete::{escaped, tag, take_until, take_while1};
 use nom::character::complete::{anychar, char, digit1, line_ending, none_of, one_of};
 use nom::character::is_alphanumeric;
-use nom::combinator::{complete, map, not, opt, peek, recognize, rest};
+use nom::combinator::{complete, map, not, opt, peek, recognize, rest, value};
 use nom::multi::{fold_many1, many0};
 use nom::number::complete::{double, hex_u32};
-use nom::sequence::{delimited, pair, preceded};
+use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::*;
 use std::str::FromStr;
 
@@ -247,35 +247,23 @@ fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
 }
 
-named!(
-    edn_comment<crate::Edn>,
-    do_parse!(
-        n: preceded!(
-            tag!(";"),
-            value!(
-                Edn::Comment,
-                alt!(
-                    complete!(alt!(
-                        do_parse!(c: take_until!("\n") >> tag!("\n") >> (c))
-                            | do_parse!(c: take_until!("\r\n") >> tag!("\r\n") >> (c))
-                    )) | rest
-                )
-            )
-        ) >> (n)
-    )
-);
+fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+    let (s, c) = preceded(
+        tag(";"),
+        value(
+            Edn::Comment,
+            alt((
+                alt((
+                    terminated(take_until("\n"), tag("\n")),
+                    terminated(take_until("\r\n"), tag("\r\n")),
+                )),
+                rest,
+            )),
+        ),
+    )(s)?;
 
-// fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
-//     let (s, c) = preceded(
-//         tag(";"),
-//         nom::combinator::value(
-//             Edn::Comment,
-//             nom::sequence::terminated(not_line_ending, line_ending),
-//         ),
-//     )(s)?;
-//
-//     Ok((s, c))
-// }
+    Ok((s, c))
+}
 
 fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
     let (s, edn) = alt((
