@@ -107,18 +107,22 @@ fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     Ok((s, i))
 }
 
-named!(
-    edn_float<crate::Edn>,
-    do_parse!(
-        f: alt!(
-            complete!(pair!(recognize!(double), tag!("M"))) => { |(d, _): (&[u8], &[u8])|
-                Edn::Decimal(rust_decimal::Decimal::from_str(std::str::from_utf8(d).unwrap()).unwrap())
-            } |
-            ws!(double) => { |d| Edn::Float(d) } |
-            double => { |d| Edn::Float(d) }
-        ) >> (f)
-    )
-);
+fn edn_float(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, f) = alt((
+        map(
+            pair(recognize(double), tag("M")),
+            |(d, _): (&[u8], &[u8])| {
+                Edn::Decimal(
+                    rust_decimal::Decimal::from_str(unsafe { std::str::from_utf8_unchecked(d) })
+                        .unwrap(),
+                )
+            },
+        ),
+        map(double, |d| Edn::Float(d)),
+    ))(s)?;
+
+    Ok((s, f))
+}
 
 fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     let (s, _) = tag("\"")(s)?;
