@@ -3,9 +3,9 @@ use nom::bytes::complete::{escaped, tag, take_while1};
 use nom::character::complete::{anychar, char, digit1, line_ending, none_of, one_of};
 use nom::character::is_alphanumeric;
 use nom::combinator::{complete, map, not, opt, peek, recognize, rest};
-use nom::multi::many0;
+use nom::multi::{fold_many1, many0};
 use nom::number::complete::{double, hex_u32};
-use nom::sequence::{pair, preceded};
+use nom::sequence::{delimited, pair, preceded};
 use nom::*;
 use std::str::FromStr;
 
@@ -273,25 +273,25 @@ named!(
     )
 );
 
-named!(
-    edn_set<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("#{"))
-            >> set: opt!(fold_many1!(
-                ws_or_comma!(edn_any),
-                HashSet::new(),
-                |mut acc: HashSet<_>, v| {
-                    if let Some(actual_v) = v {
-                        acc.insert(actual_v);
-                    }
+fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("#{")(s)?;
 
-                    acc
-                }
-            ))
-            >> ws_or_comma!(tag!("}"))
-            >> (Edn::Set(set.unwrap_or_else(HashSet::new)))
-    )
-);
+    let (s, set) = opt(fold_many1(
+        delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+        HashSet::new(),
+        |mut acc: HashSet<_>, v| {
+            if let Some(actual_v) = v {
+                acc.insert(actual_v);
+            }
+
+            acc
+        },
+    ))(s)?;
+
+    let (s, _) = tag("}")(s)?;
+
+    Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
+}
 
 named!(
     edn_comment<crate::Edn>,
@@ -821,6 +821,45 @@ mod tests {
                     List(vec!(Integer(1), Integer(2), Set(hashset!()))),
                     Keyword("zzzzzzzz".to_string())
                 ))
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_sets_with_leading_whitespace() {
+        let set_str = "#{,,,1 2 5}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_sets_with_trailing_whitespace() {
+        let set_str = "#{1 2 5,, ,}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_sets_with_leading_and_trailing_whitespace() {
+        let set_str = "#{ ,,      ,,   1 2 5,, ,}";
+        let set_res = edn_set(set_str.as_bytes());
+        assert_eq!(
+            set_res,
+            Ok((
+                vec!().as_slice(),
+                Set(hashset!(Integer(1), Integer(2), Integer(5)))
             ))
         );
     }
