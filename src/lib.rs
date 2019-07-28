@@ -374,33 +374,11 @@ fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
     Ok((s, edn))
 }
 
-named!(
-    edn_all<Vec<crate::Edn>>,
-    do_parse!(
-        edn: many0!(complete!(edn_any))
-            >> opt!(line_ending)
-            >> (edn.into_iter().flatten().collect())
-    )
-);
-
-// fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
-//     // let (s, edn) = nom::combinator::complete(nom::multi::separated_list(
-//     //     nom::multi::many1(whitespace),
-//     //     edn_any,
-//     // ))(s)?;
-//
-//     // let (s, edn) = nom::multi::many1(nom::sequence::terminated(
-//     //     edn_any,
-//     //     nom::multi::many1(whitespace),
-//     // ))(s)?;
-//     let (s, edn) = nom::multi::many0(nom::combinator::complete(edn_any))(s)?;
-//
-//     let (s, _) = nom::combinator::opt(line_ending)(s)?;
-//
-//     // let (s, _) = nom::combinator::opt(nom::multi::many1(whitespace))(s)?;
-//
-//     Ok((s, edn.into_iter().flatten().collect()))
-// }
+fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
+    let (s, edn) = nom::multi::many0(nom::combinator::complete(edn_any))(s)?;
+    let (s, _) = nom::combinator::opt(line_ending)(s)?;
+    Ok((s, edn.into_iter().flatten().collect()))
+}
 
 fn matches_identifier(c: u8) -> bool {
     is_alphanumeric(c) || c == b'-' || c == b'_' || c == b'.' || c == b'+' || c == b'&'
