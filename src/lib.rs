@@ -1,8 +1,11 @@
-use nom::character::complete::*;
+use nom::branch::alt;
+use nom::bytes::complete::{escaped, tag, take_while1};
+use nom::character::complete::{anychar, char, digit1, line_ending, none_of, one_of};
 use nom::character::is_alphanumeric;
-use nom::combinator::map;
-use nom::combinator::rest;
-use nom::number::complete::*;
+use nom::combinator::{complete, map, not, opt, peek, recognize, rest};
+use nom::multi::many0;
+use nom::number::complete::{double, hex_u32};
+use nom::sequence::{pair, preceded};
 use nom::*;
 use std::str::FromStr;
 
@@ -58,31 +61,22 @@ macro_rules! ws_or_comma (
 );
 
 fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>> {
-    let (s, _) = nom::sequence::preceded(
-        nom::bytes::complete::tag("#_"),
-        nom::combinator::recognize(edn_any),
-    )(s)?;
+    let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
 
     Ok((s, None))
 }
 
 fn edn_nil(s: &[u8]) -> IResult<&[u8], crate::Edn> {
-    let (s, _) = nom::bytes::complete::tag("nil")(s)?;
+    let (s, _) = tag("nil")(s)?;
     Ok((s, Edn::Nil))
 }
 
 fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
-    let (s, v) = nom::combinator::map(
-        nom::branch::alt((
-            nom::bytes::complete::tag("true"),
-            nom::bytes::complete::tag("false"),
-        )),
-        |value| match value {
-            _ if value == b"true" => Edn::Bool(true),
-            _ if value == b"false" => Edn::Bool(false),
-            _ => panic!("nonbool matched, definitely an error."),
-        },
-    )(s)?;
+    let (s, v) = map(alt((tag("true"), tag("false"))), |value| match value {
+        _ if value == b"true" => Edn::Bool(true),
+        _ if value == b"false" => Edn::Bool(false),
+        _ => panic!("nonbool matched, definitely an error."),
+    })(s)?;
 
     Ok((s, v))
 }
@@ -136,40 +130,27 @@ named!(
 );
 
 fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
-    let (s, _) = nom::bytes::complete::tag("\"")(s)?;
-    let (s, string) = nom::combinator::map(
-        nom::bytes::complete::escaped(
-            nom::character::complete::none_of("\"\\"),
-            '\\',
-            nom::character::complete::one_of("\"ntr\\"),
-        ),
-        |s| Edn::String(std::str::from_utf8(s).unwrap()),
-    )(s)?;
-    let (s, _) = nom::bytes::complete::tag("\"")(s)?;
+    let (s, _) = tag("\"")(s)?;
+    let (s, string) = map(escaped(none_of("\"\\"), '\\', one_of("\"ntr\\")), |s| {
+        Edn::String(std::str::from_utf8(s).unwrap())
+    })(s)?;
+    let (s, _) = tag("\"")(s)?;
 
     Ok((s, string))
 }
 
 fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, c) = nom::sequence::preceded(
-        nom::bytes::complete::tag("\\"),
-        nom::branch::alt((
-            nom::combinator::map(
-                nom::sequence::preceded(
-                    nom::character::complete::char('u'),
-                    nom::number::complete::hex_u32,
-                ),
-                |c| Edn::Character(unsafe { std::char::from_u32_unchecked(c) }),
-            ),
-            nom::combinator::map(nom::bytes::complete::tag("newline"), |_| {
-                Edn::Character('\n')
+    let (s, c) = preceded(
+        tag("\\"),
+        alt((
+            map(preceded(char('u'), hex_u32), |c| {
+                Edn::Character(unsafe { std::char::from_u32_unchecked(c) })
             }),
-            nom::combinator::map(nom::bytes::complete::tag("return"), |_| {
-                Edn::Character('\r')
-            }),
-            nom::combinator::map(nom::bytes::complete::tag("space"), |_| Edn::Character(' ')),
-            nom::combinator::map(nom::bytes::complete::tag("tab"), |_| Edn::Character('\t')),
-            nom::combinator::map(nom::character::complete::anychar, |c| Edn::Character(c)),
+            map(tag("newline"), |_| Edn::Character('\n')),
+            map(tag("return"), |_| Edn::Character('\r')),
+            map(tag("space"), |_| Edn::Character(' ')),
+            map(tag("tab"), |_| Edn::Character('\t')),
+            map(anychar, |c| Edn::Character(c)),
         )),
     )(s)?;
 
@@ -177,14 +158,11 @@ fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
 }
 
 fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, _) = nom::bytes::complete::tag(":")(s)?;
+    let (s, _) = tag(":")(s)?;
 
-    let optional_namespace = nom::combinator::opt(nom::sequence::pair(
-        nom::bytes::complete::take_while1(matches_identifier),
-        nom::bytes::complete::tag("/"),
-    ));
+    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
+    let (s, sym) = take_while1(matches_identifier)(s)?;
 
     if let Some((ns, slash)) = namespace {
         Ok((
@@ -200,14 +178,11 @@ fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
 }
 
 fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    nom::combinator::peek(nom::combinator::not(nom::bytes::complete::tag(":")))(s)?;
+    peek(not(tag(":")))(s)?;
 
-    let optional_namespace = nom::combinator::opt(nom::sequence::pair(
-        nom::bytes::complete::take_while1(matches_identifier),
-        nom::bytes::complete::tag("/"),
-    ));
+    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
+    let (s, sym) = take_while1(matches_identifier)(s)?;
 
     if let Some((ns, slash)) = namespace {
         Ok((
@@ -239,27 +214,27 @@ named!(
 );
 
 // fn whitespace(s: &[u8]) -> IResult<&[u8], &[u8]> {
-//     let (s, b) = nom::branch::alt((
-//         nom::bytes::complete::tag(" "),
-//         nom::bytes::complete::tag("\n"),
-//         nom::bytes::complete::tag(","),
-//         nom::bytes::complete::tag("\r\n"),
+//     let (s, b) = alt((
+//         tag(" "),
+//         tag("\n"),
+//         tag(","),
+//         tag("\r\n"),
 //     ))(s)?;
 //
 //     Ok((s, b))
 // }
 //
 // fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-//     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
-//     let (s, _) = nom::bytes::complete::tag("(")(s)?;
-//     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
-//     let (s, elements) = nom::combinator::opt(nom::multi::separated_list(
-//         nom::multi::many0(space_or_comma),
+//     let (s, _) = many0(space_or_comma)(s)?;
+//     let (s, _) = tag("(")(s)?;
+//     let (s, _) = many0(space_or_comma)(s)?;
+//     let (s, elements) = opt(nom::multi::separated_list(
+//         many0(space_or_comma),
 //         edn_any,
 //     ))(s)?;
-//     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
-//     let (s, _) = nom::bytes::complete::tag(")")(s)?;
-//     let (s, _) = nom::multi::many0(space_or_comma)(s)?;
+//     let (s, _) = many0(space_or_comma)(s)?;
+//     let (s, _) = tag(")")(s)?;
+//     let (s, _) = many0(space_or_comma)(s)?;
 //
 //     Ok((
 //         s,
@@ -342,8 +317,8 @@ named!(
 );
 
 // fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
-//     let (s, c) = nom::sequence::preceded(
-//         nom::bytes::complete::tag(";"),
+//     let (s, c) = preceded(
+//         tag(";"),
 //         nom::combinator::value(
 //             Edn::Comment,
 //             nom::sequence::terminated(not_line_ending, line_ending),
@@ -354,7 +329,7 @@ named!(
 // }
 
 fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
-    let (s, edn) = nom::branch::alt((
+    let (s, edn) = alt((
         edn_discard_sequence,
         map(edn_nil, |n| Some(n)),
         map(edn_list, |n| Some(n)),
@@ -375,8 +350,8 @@ fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
 }
 
 fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
-    let (s, edn) = nom::multi::many0(nom::combinator::complete(edn_any))(s)?;
-    let (s, _) = nom::combinator::opt(line_ending)(s)?;
+    let (s, edn) = many0(complete(edn_any))(s)?;
+    let (s, _) = opt(line_ending)(s)?;
     Ok((s, edn.into_iter().flatten().collect()))
 }
 
