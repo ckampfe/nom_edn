@@ -81,40 +81,31 @@ fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     Ok((s, v))
 }
 
-named!(
-    edn_int<crate::Edn>,
-    do_parse!(
-        i: map!(
-            alt!(
-                pair!(
-                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
-                    digit1
-                ) | ws!(pair!(
-                    opt!(alt!(tag!("+") | tag!("-"))), // maybe sign?
-                    digit1
-                ))
-            ),
-            |(sign, digits)| {
-                let i = if let Some(s) = sign {
-                    let nstr = std::str::from_utf8(digits).unwrap();
-                    let n = nstr.parse::<isize>().unwrap();
-                    if s == b"-" {
-                        -n
-                    } else {
-                        n
-                    }
+fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, i) = map(
+        pair(opt(alt((tag("+"), tag("-")))), digit1),
+        |(sign, digits)| {
+            let i = if let Some(s) = sign {
+                let nstr = std::str::from_utf8(digits).unwrap();
+                let n = nstr.parse::<isize>().unwrap();
+                if s == b"-" {
+                    -n
                 } else {
-                    let nstr = std::str::from_utf8(digits).unwrap();
-                    nstr.parse::<isize>().unwrap()
-                };
+                    n
+                }
+            } else {
+                let nstr = std::str::from_utf8(digits).unwrap();
+                nstr.parse::<isize>().unwrap()
+            };
 
-                Edn::Integer(i)
-            }
-        )
-            >> not!(tag!(".")) // negative lookahead so we don't parse floats as ints
-            >> (i)
-    )
-);
+            Edn::Integer(i)
+        },
+    )(s)?;
+
+    let (s, _) = not(tag("."))(s)?;
+
+    Ok((s, i))
+}
 
 named!(
     edn_float<crate::Edn>,
