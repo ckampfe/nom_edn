@@ -52,14 +52,6 @@ impl<'a> Eq for Edn<'a> {}
 
 named!(pub space_or_comma, eat_separator!(&b" \t\r\n,"[..]));
 
-macro_rules! ws_or_comma (
-    ($i:expr, $($args:tt)*) => (
-        {
-            sep!($i, space_or_comma, $($args)*)
-        }
-    )
-);
-
 fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>> {
     let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
 
@@ -212,25 +204,28 @@ fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     Ok((s, Edn::Vector(elements.into_iter().flatten().collect())))
 }
 
-named!(
-    edn_map<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("{"))
-            >> map: opt!(fold_many1!(
-                pair!(ws_or_comma!(edn_any), ws_or_comma!(edn_any)),
-                HashMap::new(),
-                |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
-                    (Some(kk), Some(vv)) => {
-                        acc.insert(kk, vv);
-                        acc
-                    }
-                    _ => acc,
-                }
-            ))
-            >> ws_or_comma!(tag!("}"))
-            >> (Edn::Map(map.unwrap_or_else(HashMap::new)))
-    )
-);
+fn edn_map(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("{")(s)?;
+
+    let (s, map) = opt(fold_many1(
+        pair(
+            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+        ),
+        HashMap::new(),
+        |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
+            (Some(kk), Some(vv)) => {
+                acc.insert(kk, vv);
+                acc
+            }
+            _ => acc,
+        },
+    ))(s)?;
+
+    let (s, _) = tag("}")(s)?;
+
+    Ok((s, Edn::Map(map.unwrap_or_else(HashMap::new))))
+}
 
 fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     let (s, _) = tag("#{")(s)?;
@@ -304,6 +299,8 @@ fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
 }
 
 fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
+    let (s, _) = opt(space_or_comma)(s)?;
+
     let (s, edn) = many0(delimited(
         opt(many0(line_ending)),
         complete(edn_any),
