@@ -243,15 +243,15 @@ named!(
 //     ))
 // }
 
-named!(
-    edn_vector<crate::Edn>,
-    do_parse!(
-        ws_or_comma!(tag!("["))
-            >> elements: many0!(ws_or_comma!(edn_any))
-            >> ws_or_comma!(tag!("]"))
-            >> (Edn::Vector(elements.into_iter().flatten().collect()))
-    )
-);
+fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+    let (s, _) = tag("[")(s)?;
+
+    let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
+
+    let (s, _) = tag("]")(s)?;
+
+    Ok((s, Edn::Vector(elements.into_iter().flatten().collect())))
+}
 
 named!(
     edn_map<crate::Edn>,
@@ -918,7 +918,7 @@ mod tests {
 
         // preceding
         assert_eq!(
-            edn_all(b";; this is a comment and should not appear\n[1 2 3]"),
+            edn_all(b";; this is a comment and should not appear\n[,,, 1,, 2 3    ,,]"),
             Ok((
                 vec!().as_slice(),
                 vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
@@ -927,7 +927,7 @@ mod tests {
 
         // following
         assert_eq!(
-            edn_all(b"[1 2 3];; this is a comment and should not appear"),
+            edn_all(b"[  1, 2, 3, ,,,];; this is a comment and should not appear"),
             Ok((
                 vec!().as_slice(),
                 vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
