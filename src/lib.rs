@@ -363,19 +363,19 @@ mod tests {
 
     #[test]
     fn parses_keywords() {
-        let keystr = ":a-kw ";
+        let keystr = ":a-kw";
         let res = edn_keyword(keystr.as_bytes());
-        assert_eq!(res, Ok((vec!(32).as_slice(), Keyword("a-kw".to_string()))));
+        assert_eq!(res, Ok((vec!().as_slice(), Keyword("a-kw".to_string()))));
     }
 
     #[test]
     fn parses_namespaced_keywords() {
-        let keystr = ":org.clojure/clojure ";
+        let keystr = ":org.clojure/clojure";
         let res = edn_keyword(keystr.as_bytes());
         assert_eq!(
             res,
             Ok((
-                vec!(32).as_slice(),
+                vec!().as_slice(),
                 Keyword("org.clojure/clojure".to_string())
             ))
         );
@@ -383,9 +383,9 @@ mod tests {
 
     #[test]
     fn parses_ints() {
-        let intstr = "1 ";
+        let intstr = "1";
         let res = edn_int(intstr.as_bytes());
-        assert_eq!(res, Ok((vec!(32).as_slice(), Integer(1))));
+        assert_eq!(res, Ok((vec!().as_slice(), Integer(1))));
     }
 
     #[test]
@@ -437,21 +437,18 @@ mod tests {
 
     #[test]
     fn parses_symbols() {
-        let symstr = "a-sym ";
+        let symstr = "a-sym";
         let res = edn_symbol(symstr.as_bytes());
-        assert_eq!(res, Ok((vec!(32).as_slice(), Symbol("a-sym".to_string()))));
+        assert_eq!(res, Ok((vec!().as_slice(), Symbol("a-sym".to_string()))));
     }
 
     #[test]
     fn parses_namedspaced_symbols() {
-        let symstr = "org.clojure/clojure ";
+        let symstr = "org.clojure/clojure";
         let res = edn_symbol(symstr.as_bytes());
         assert_eq!(
             res,
-            Ok((
-                vec!(32).as_slice(),
-                Symbol("org.clojure/clojure".to_string())
-            ))
+            Ok((vec!().as_slice(), Symbol("org.clojure/clojure".to_string())))
         );
     }
 
@@ -474,12 +471,12 @@ mod tests {
 
     #[test]
     fn parses_with_unicode_literals() {
-        let charstr1 = "\\u0065 ";
-        let charstr2 = "\\u0177 ";
+        let charstr1 = "\\u0065";
+        let charstr2 = "\\u0177";
         let res1 = edn_char(charstr1.as_bytes());
         let res2 = edn_char(charstr2.as_bytes());
-        assert_eq!(res1, Ok((vec!(32).as_slice(), Character('e'))));
-        assert_eq!(res2, Ok((vec!(32).as_slice(), Character('ŷ'))));
+        assert_eq!(res1, Ok((vec!().as_slice(), Character('e'))));
+        assert_eq!(res2, Ok((vec!().as_slice(), Character('ŷ'))));
     }
 
     #[test]
