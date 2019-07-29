@@ -78,7 +78,7 @@ fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
         pair(opt(alt((tag("+"), tag("-")))), digit1),
         |(sign, digits)| {
             let i = if let Some(s) = sign {
-                let nstr = std::str::from_utf8(digits).unwrap();
+                let nstr = unsafe { std::str::from_utf8_unchecked(digits) };
                 let n = nstr.parse::<isize>().unwrap();
                 if s == b"-" {
                     -n
@@ -86,7 +86,7 @@ fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
                     n
                 }
             } else {
-                let nstr = std::str::from_utf8(digits).unwrap();
+                let nstr = unsafe { std::str::from_utf8_unchecked(digits) };
                 nstr.parse::<isize>().unwrap()
             };
 
