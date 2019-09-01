@@ -9,7 +9,7 @@ nom = "5.0"
 rust_decimal = "1.0.1"
 
 [dev-dependencies]
-criterion = "0.2"
+criterion = "0.3"
 
 [[bench]]
 name = "bench"
