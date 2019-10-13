@@ -1104,6 +1104,20 @@ mod tests {
             Map(hashmap!(Keyword("a".to_string()), Integer(1))),
             Map(hashmap!(Keyword("a".to_string()), Integer(1)))
         );
+        assert_eq!(
+            Map(hashmap!(
+                Keyword("a".to_string()),
+                Integer(1),
+                Keyword("b".to_string()),
+                Integer(2)
+            )),
+            Map(hashmap!(
+                Keyword("b".to_string()),
+                Integer(2),
+                Keyword("a".to_string()),
+                Integer(1)
+            ))
+        );
         assert_ne!(
             Map(hashmap!(Keyword("a".to_string()), Float(2.1))),
             Map(hashmap!(Keyword("a".to_string()), Float(1.2)))
