@@ -1077,12 +1077,16 @@ mod tests {
 
         // Decimal(rust_decimal::Decimal),
         assert_eq!(
-            rust_decimal::Decimal::from_str("32.0").unwrap(),
-            rust_decimal::Decimal::from_str("32.0").unwrap()
+            Decimal(rust_decimal::Decimal::from_str("32.0").unwrap()),
+            Decimal(rust_decimal::Decimal::from_str("32.0").unwrap())
         );
         assert_ne!(
-            rust_decimal::Decimal::from_str("32.0").unwrap(),
-            rust_decimal::Decimal::from_str("19.9999999999").unwrap()
+            Decimal(rust_decimal::Decimal::from_str("32.0").unwrap()),
+            Decimal(rust_decimal::Decimal::from_str("19.9999999999").unwrap())
+        );
+        assert_ne!(
+            Decimal(rust_decimal::Decimal::from_str("32.0").unwrap()),
+            Float(32.0)
         );
 
         // List(Vec<Edn<'a>>),
