@@ -5,7 +5,7 @@ authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-nom = "5.1"
+nom = "6.0"
 rust_decimal = "1.4.1"
 
 [dev-dependencies]
