@@ -4,9 +4,15 @@ version = "0.1.0"
 authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
+[features]
+default = ["im"]
+
 [dependencies]
-nom = "5.1"
-rust_decimal = "1.4.1"
+im = { version = "15.0", optional = true }
+im-rc = { version = "15.0", optional = true }
+nom = "6.0"
+ordered-float = "2.0"
+rust_decimal = "1.8"
 
 [dev-dependencies]
 criterion = "0.3"
@@ -14,3 +20,6 @@ criterion = "0.3"
 [[bench]]
 name = "bench"
 harness = false
+
+[profile.bench]
+lto = true

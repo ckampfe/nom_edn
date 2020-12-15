@@ -2,17 +2,12 @@
 extern crate criterion;
 
 use criterion::Criterion;
-use nom_edn;
-use std::io::Read;
+use nom_edn::*;
 
 fn deps_edn(c: &mut Criterion) {
-    let mut edn = std::fs::File::open("./fixtures/deps.edn").unwrap();
+    let edn = include_str!("../fixtures/deps.edn");
 
-    let mut buf = Vec::new();
-
-    edn.read_to_end(&mut buf).unwrap();
-
-    c.bench_function("deps.edn", move |b| b.iter(|| nom_edn::parse_bytes(&buf)));
+    c.bench_function("deps.edn", move |b| b.iter(|| edn!(&edn)));
 }
 
 criterion_group!(benches, deps_edn);

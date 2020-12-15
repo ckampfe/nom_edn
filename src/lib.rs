@@ -1,38 +1,36 @@
+use bytes::complete::tag;
 use nom::branch::alt;
-use nom::bytes::complete::{escaped, tag, take_until, take_while1};
-use nom::character::complete::{anychar, char, digit1, line_ending, none_of, one_of};
+use nom::bytes::complete::escaped;
+use nom::character::complete::{anychar, char, none_of, one_of};
 use nom::character::is_alphanumeric;
 use nom::combinator::{complete, map, not, opt, peek, recognize, rest, value};
 use nom::multi::{fold_many1, many0};
-use nom::number::complete::{double, hex_u32};
 use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::*;
 use std::str::FromStr;
 
-use std::collections::{HashMap, HashSet};
+#[cfg(all(feature = "im", feature = "im-rc"))]
+compile_error!("features `im` and `im-rc` are mutually exclusive");
+#[cfg(feature = "im")]
+use im::{HashMap, HashSet};
+#[cfg(feature = "im-rc")]
+use im_rc::{HashMap, HashSet};
 
-type EdnParseResult<'a> =
-    Result<(&'a [u8], Option<Edn<'a>>), nom::Err<(&'a [u8], nom::error::ErrorKind)>>;
-
-pub fn parse_bytes(bytes: &[u8]) -> EdnParseResult {
-    edn_any(bytes)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Edn<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum Edn {
     Nil,
     Bool(bool),
-    String(&'a str),
+    String(String),
     Character(char),
     Symbol(String),
     Keyword(String),
     Integer(isize),
-    Float(f64),
+    Float(ordered_float::OrderedFloat<f64>),
     Decimal(rust_decimal::Decimal),
-    List(Vec<Edn<'a>>),
-    Vector(Vec<Edn<'a>>),
-    Map(HashMap<Edn<'a>, Edn<'a>>),
-    Set(HashSet<Edn<'a>>),
+    List(Vec<Edn>),
+    Vector(Vec<Edn>),
+    Map(HashMap<Edn, Edn>),
+    Set(HashSet<Edn>),
     // Right now `Comment` is a marker value that follows the edn spec
     // by ignoring any subsequent data, but in the future we could
     // make a variant of it that captures the comment data itself.
@@ -42,28 +40,61 @@ pub enum Edn<'a> {
     // TODO: handle tagged elements
 }
 
-impl<'a> std::hash::Hash for Edn<'a> {
-    fn hash<H>(&self, _state: &mut H) {
-        // unimplemented!()
+#[macro_export]
+macro_rules! edn {
+    ($b:expr) => {
+        parse_edn_one($b.as_bytes()).unwrap()
+    };
+}
+
+#[macro_export]
+macro_rules! edn_many {
+    ($b:expr) => {
+        parse_edn_many($b.as_bytes()).unwrap()
+    };
+}
+
+pub fn parse_edn_one(input: &[u8]) -> Result<Edn, nom::error::VerboseError<&[u8]>> {
+    if input.is_empty() {
+        return Ok(Edn::Nil);
+    }
+
+    let (_s, o) = edn_any(input).finish()?;
+    match o {
+        Some(edn) => Ok(edn),
+        None => Ok(Edn::Nil),
     }
 }
 
-impl<'a> Eq for Edn<'a> {}
+pub fn parse_edn_many(s: &[u8]) -> Result<Vec<Edn>, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = opt(space_or_comma)(s).finish()?;
 
-named!(pub space_or_comma, eat_separator!(&b" \t\r\n,"[..]));
+    let (_s, edn) = many0(delimited(
+        opt(many0(nom::character::complete::line_ending)),
+        complete(edn_any),
+        opt(many0(nom::character::complete::line_ending)),
+    ))(s)
+    .finish()?;
 
-fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>> {
-    let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
+    Ok(edn.into_iter().flatten().collect())
+}
+
+fn space_or_comma(s: &[u8]) -> IResult<&[u8], &[u8], nom::error::VerboseError<&[u8]>> {
+    s.split_at_position(|c| !b" \t\r\n,".find_token(c))
+}
+
+fn edn_discard_sequence(s: &[u8]) -> IResult<&[u8], Option<Edn>, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = preceded(nom::bytes::complete::tag("#_"), recognize(edn_any))(s)?;
 
     Ok((s, None))
 }
 
-fn edn_nil(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+fn edn_nil(s: &[u8]) -> IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, _) = tag("nil")(s)?;
     Ok((s, Edn::Nil))
 }
 
-fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, v) = map(alt((tag("true"), tag("false"))), |value| match value {
         _ if value == b"true" => Edn::Bool(true),
         _ if value == b"false" => Edn::Bool(false),
@@ -73,9 +104,15 @@ fn edn_bool(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     Ok((s, v))
 }
 
-fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, i) = map(
-        pair(opt(alt((tag("+"), tag("-")))), digit1),
+        pair(
+            opt(alt((
+                nom::bytes::complete::tag("+"),
+                nom::bytes::complete::tag("-"),
+            ))),
+            nom::character::complete::digit1,
+        ),
         |(sign, digits)| {
             let i = if let Some(s) = sign {
                 let nstr = unsafe { std::str::from_utf8_unchecked(digits) };
@@ -94,15 +131,18 @@ fn edn_int(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
         },
     )(s)?;
 
-    let (s, _) = not(tag("."))(s)?;
+    let (s, _) = not(nom::bytes::complete::tag("."))(s)?;
 
     Ok((s, i))
 }
 
-fn edn_float(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+fn edn_float(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, f) = alt((
         map(
-            pair(recognize(double), tag("M")),
+            pair(
+                recognize(nom::number::complete::double),
+                nom::bytes::complete::tag("M"),
+            ),
             |(d, _): (&[u8], &[u8])| {
                 Edn::Decimal(
                     rust_decimal::Decimal::from_str(unsafe { std::str::from_utf8_unchecked(d) })
@@ -110,46 +150,49 @@ fn edn_float(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
                 )
             },
         ),
-        map(double, |d| Edn::Float(d)),
+        map(nom::number::complete::double, |d| Edn::Float(d.into())),
     ))(s)?;
 
     Ok((s, f))
 }
 
-fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+fn edn_string(s: &[u8]) -> IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, _) = tag("\"")(s)?;
     let (s, string) = map(escaped(none_of("\"\\"), '\\', one_of("\"ntr\\")), |s| {
-        Edn::String(std::str::from_utf8(s).unwrap())
+        Edn::String(std::str::from_utf8(s).unwrap().to_string())
     })(s)?;
     let (s, _) = tag("\"")(s)?;
 
     Ok((s, string))
 }
 
-fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+fn edn_char(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, c) = preceded(
         tag("\\"),
         alt((
-            map(preceded(char('u'), hex_u32), |c| {
+            map(preceded(char('u'), nom::number::complete::hex_u32), |c| {
                 Edn::Character(unsafe { std::char::from_u32_unchecked(c) })
             }),
             map(tag("newline"), |_| Edn::Character('\n')),
             map(tag("return"), |_| Edn::Character('\r')),
             map(tag("space"), |_| Edn::Character(' ')),
             map(tag("tab"), |_| Edn::Character('\t')),
-            map(anychar, |c| Edn::Character(c)),
+            map(anychar, Edn::Character),
         )),
     )(s)?;
 
     Ok((s, c))
 }
 
-fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, _) = tag(":")(s)?;
 
-    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(pair(
+        nom::bytes::complete::take_while1(matches_identifier),
+        tag("/"),
+    ));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = take_while1(matches_identifier)(s)?;
+    let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
 
     if let Some((ns, slash)) = namespace {
         Ok((
@@ -164,12 +207,15 @@ fn edn_keyword(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     }
 }
 
-fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
+fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     peek(not(tag(":")))(s)?;
 
-    let optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(pair(
+        nom::bytes::complete::take_while1(matches_identifier),
+        nom::bytes::complete::tag("/"),
+    ));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = take_while1(matches_identifier)(s)?;
+    let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
 
     if let Some((ns, slash)) = namespace {
         Ok((
@@ -184,33 +230,41 @@ fn edn_symbol(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
     }
 }
 
-fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, _) = tag("(")(s)?;
+fn edn_list(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = nom::bytes::complete::tag("(")(s)?;
 
     let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
 
-    let (s, _) = tag(")")(s)?;
+    let (s, _) = nom::bytes::complete::tag(")")(s)?;
 
     Ok((s, Edn::List(elements.into_iter().flatten().collect())))
 }
 
-fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, _) = tag("[")(s)?;
+fn edn_vector(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = nom::bytes::complete::tag("[")(s)?;
 
     let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
 
-    let (s, _) = tag("]")(s)?;
+    let (s, _) = nom::bytes::complete::tag("]")(s)?;
 
     Ok((s, Edn::Vector(elements.into_iter().flatten().collect())))
 }
 
-fn edn_map(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, _) = tag("{")(s)?;
+fn edn_map(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = nom::bytes::complete::tag("{")(s)?;
 
     let (s, map) = opt(fold_many1(
         pair(
-            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
-            delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
+            delimited(
+                opt(space_or_comma),
+                nom::combinator::complete(edn_any),
+                opt(space_or_comma),
+            ),
+            delimited(
+                opt(space_or_comma),
+                nom::combinator::complete(edn_any),
+                opt(space_or_comma),
+            ),
         ),
         HashMap::new(),
         |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
@@ -222,13 +276,13 @@ fn edn_map(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
         },
     ))(s)?;
 
-    let (s, _) = tag("}")(s)?;
+    let (s, _) = nom::bytes::complete::tag("}")(s)?;
 
     Ok((s, Edn::Map(map.unwrap_or_else(HashMap::new))))
 }
 
-fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
-    let (s, _) = tag("#{")(s)?;
+fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
+    let (s, _) = nom::bytes::complete::tag("#{")(s)?;
 
     let (s, set) = opt(fold_many1(
         delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
@@ -242,20 +296,26 @@ fn edn_set(s: &[u8]) -> nom::IResult<&[u8], crate::Edn> {
         },
     ))(s)?;
 
-    let (s, _) = tag("}")(s)?;
+    let (s, _) = nom::bytes::complete::tag("}")(s)?;
 
     Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
 }
 
-fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
+fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn, nom::error::VerboseError<&[u8]>> {
     let (s, c) = preceded(
-        tag(";"),
+        nom::bytes::complete::tag(";"),
         value(
             Edn::Comment,
             alt((
                 alt((
-                    terminated(take_until("\n"), tag("\n")),
-                    terminated(take_until("\r\n"), tag("\r\n")),
+                    terminated(
+                        nom::bytes::complete::take_until("\n"),
+                        nom::bytes::complete::tag("\n"),
+                    ),
+                    terminated(
+                        nom::bytes::complete::take_until("\r\n"),
+                        nom::bytes::complete::tag("\r\n"),
+                    ),
                 )),
                 rest,
             )),
@@ -265,37 +325,25 @@ fn edn_comment(s: &[u8]) -> IResult<&[u8], crate::Edn> {
     Ok((s, c))
 }
 
-fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>> {
+fn edn_any(s: &[u8]) -> IResult<&[u8], Option<crate::Edn>, nom::error::VerboseError<&[u8]>> {
     let (s, edn) = alt((
         edn_discard_sequence,
-        map(edn_nil, |n| Some(n)),
-        map(edn_list, |n| Some(n)),
-        map(edn_map, |n| Some(n)),
-        map(edn_vector, |n| Some(n)),
-        map(edn_set, |n| Some(n)),
-        map(edn_int, |n| Some(n)),
-        map(edn_float, |n| Some(n)),
-        map(edn_bool, |n| Some(n)),
-        map(edn_keyword, |n| Some(n)),
-        map(edn_string, |n| Some(n)),
-        map(edn_symbol, |n| Some(n)),
-        map(edn_char, |n| Some(n)),
+        map(edn_nil, Some),
+        map(edn_list, Some),
+        map(edn_map, Some),
+        map(edn_vector, Some),
+        map(edn_set, Some),
+        map(edn_int, Some),
+        map(edn_float, Some),
+        map(edn_bool, Some),
+        map(edn_keyword, Some),
+        map(edn_string, Some),
+        map(edn_symbol, Some),
+        map(edn_char, Some),
         map(edn_comment, |_| None),
     ))(s)?;
 
     Ok((s, edn))
-}
-
-fn edn_all(s: &[u8]) -> IResult<&[u8], Vec<crate::Edn>> {
-    let (s, _) = opt(space_or_comma)(s)?;
-
-    let (s, edn) = many0(delimited(
-        opt(many0(line_ending)),
-        complete(edn_any),
-        opt(many0(line_ending)),
-    ))(s)?;
-
-    Ok((s, edn.into_iter().flatten().collect()))
 }
 
 fn matches_identifier(c: u8) -> bool {
@@ -307,8 +355,11 @@ mod tests {
     use super::Edn::*;
     use super::*;
     use rust_decimal;
-    use std::io::prelude::*;
+    use std::io::Read;
     use std::str::FromStr;
+
+    const DEPS_DOT_EDN: &str = include_str!("../fixtures/deps.edn");
+    const ASCII_STL: &str = include_str!("../fixtures/ascii_stl.clj");
 
     macro_rules! hashmap {
         () => {
@@ -364,14 +415,14 @@ mod tests {
     #[test]
     fn parses_keywords() {
         let keystr = ":a-kw";
-        let res = edn_keyword(keystr.as_bytes());
+        let res = nom::combinator::complete(edn_keyword)(keystr.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), Keyword("a-kw".to_string()))));
     }
 
     #[test]
     fn parses_namespaced_keywords() {
         let keystr = ":org.clojure/clojure";
-        let res = edn_keyword(keystr.as_bytes());
+        let res = nom::combinator::complete(edn_keyword)(keystr.as_bytes());
         assert_eq!(
             res,
             Ok((
@@ -390,29 +441,32 @@ mod tests {
 
     #[test]
     fn parses_floats() {
+        let negative_0 = -0.0f64;
+        let negative_1 = -1.0f64;
+        let negative_120_000 = -120_000.0;
         assert_eq!(
             edn_float("0.0".as_bytes()),
-            Ok((vec!().as_slice(), Float(0.0)))
+            Ok((vec!().as_slice(), Float(0.0.into())))
         );
         assert_eq!(
             edn_float("-0.0".as_bytes()),
-            Ok((vec!().as_slice(), Float(-0.0)))
+            Ok((vec!().as_slice(), Float(negative_0.into())))
         );
         assert_eq!(
             edn_float("1.0".as_bytes()),
-            Ok((vec!().as_slice(), Float(1.0)))
+            Ok((vec!().as_slice(), Float(1.0.into())))
         );
         assert_eq!(
             edn_float("-1.0".as_bytes()),
-            Ok((vec!().as_slice(), Float(-1.0)))
+            Ok((vec!().as_slice(), Float(negative_1.into())))
         );
         assert_eq!(
             edn_float("-1.2E5".as_bytes()),
-            Ok((vec!().as_slice(), Float(-1.2E5)))
+            Ok((vec!().as_slice(), Float(negative_120_000.into())))
         );
         assert_eq!(
             edn_float("-120000".as_bytes()),
-            Ok((vec!().as_slice(), Float(-1.2E5)))
+            Ok((vec!().as_slice(), Float(negative_120_000.into())))
         );
     }
 
@@ -456,7 +510,7 @@ mod tests {
     fn parses_strings() {
         let strstr = "\"hello\"";
         let res = edn_string(strstr.as_bytes());
-        assert_eq!(res, Ok((vec!().as_slice(), String("hello"))));
+        assert_eq!(res, Ok((vec!().as_slice(), String("hello".to_string()))));
     }
 
     #[test]
@@ -466,7 +520,10 @@ mod tests {
         let mut buf = Vec::new();
         embedded_str.read_to_end(&mut buf).unwrap();
         let embedded_res = edn_string(&mut buf);
-        assert_eq!(embedded_res, Ok((vec!(10).as_bytes(), String("hel\\\"lo"))));
+        assert_eq!(
+            embedded_res,
+            Ok((vec!(10).as_bytes(), String("hel\\\"lo".to_string())))
+        );
     }
 
     #[test]
@@ -686,7 +743,7 @@ mod tests {
                 vec!().as_slice(),
                 Map(hashmap!(
                     Keyword("a".to_string()),
-                    Vector(vec!(Integer(1), Integer(2), Float(4.01)))
+                    Vector(vec!(Integer(1), Integer(2), Float(4.01.into())))
                 ))
             ))
         );
@@ -839,7 +896,7 @@ mod tests {
                 vec!().as_slice(),
                 Map(hashmap!(
                     Keyword("a".to_string()),
-                    Float(1.01),
+                    Float(1.01.into()),
                     Keyword("c".to_string()),
                     Keyword("d".to_string())
                 ))
@@ -863,38 +920,29 @@ mod tests {
 
         // preceding
         assert_eq!(
-            edn_all(b";; this is a comment and should not appear\n[,,, 1,, 2 3    ,,]"),
-            Ok((
-                vec!().as_slice(),
-                vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
-            ))
+            edn_many!(b";; this is a comment and should not appear\n[,,, 1,, 2 3    ,,]"),
+            vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
         );
 
         // following
         assert_eq!(
-            edn_all(b"[  1, 2, 3, ,,,];; this is a comment and should not appear"),
-            Ok((
-                vec!().as_slice(),
-                vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
-            ))
+            edn_many!(b"[  1, 2, 3, ,,,];; this is a comment and should not appear"),
+            vec![Vector(vec!(Integer(1), Integer(2), Integer(3)))]
         );
 
         // middle
         assert_eq!(
-            edn_all(b"[1 2 3];; this is a comment and should not appear\n[4 5 6]"),
-            Ok((
-                vec!().as_slice(),
-                vec![
-                    Vector(vec!(Integer(1), Integer(2), Integer(3))),
-                    Vector(vec!(Integer(4), Integer(5), Integer(6)))
-                ]
-            ))
+            edn_many!(b"[1 2 3];; this is a comment and should not appear\n[4 5 6]"),
+            vec![
+                Vector(vec!(Integer(1), Integer(2), Integer(3))),
+                Vector(vec!(Integer(4), Integer(5), Integer(6)))
+            ]
         );
 
         // at EOF
         assert_eq!(
-            edn_all(b";; this is a comment and should not appear"),
-            Ok((vec!().as_slice(), vec![]))
+            edn_many!(b";; this is a comment and should not appear"),
+            vec![]
         );
     }
 
@@ -902,141 +950,126 @@ mod tests {
     fn commas_are_whitespace() {
         // lists
         assert_eq!(
-            edn_all(b"(,,1,, 2 ,, 3,,,,)"),
-            Ok((
-                vec![].as_bytes(),
-                vec![List(vec![Integer(1), Integer(2), Integer(3)])]
-            ))
+            edn_many!("(,,1,, 2 ,, 3,,,,)"),
+            vec![List(vec![Integer(1), Integer(2), Integer(3)])]
         );
 
         // vectors
         assert_eq!(
-            edn_all(b"[,,1,2,3     ,]"),
-            Ok((
-                vec![].as_bytes(),
-                vec![Vector(vec![Integer(1), Integer(2), Integer(3)])]
-            ))
+            edn_many!("[,,1,2,3     ,]"),
+            vec![Vector(vec![Integer(1), Integer(2), Integer(3)])]
         );
 
         // maps
         assert_eq!(
-            edn_all(b",{,:a,1,,,,:b,2,}"),
-            Ok((
-                vec![].as_bytes(),
-                vec![Map(hashmap![
-                    Keyword("a".to_string()),
-                    Integer(1),
-                    Keyword("b".to_string()),
-                    Integer(2)
-                ])]
-            ))
+            edn_many!(",{,:a,1,,,,:b,2,}"),
+            vec![Map(hashmap![
+                Keyword("a".to_string()),
+                Integer(1),
+                Keyword("b".to_string()),
+                Integer(2)
+            ])]
         );
 
         // set
         assert_eq!(
-            edn_all(b"#{,,,, 1 , 2, 3 ,         }"),
-            Ok((
-                vec![].as_bytes(),
-                vec![Set(hashset![Integer(1), Integer(2), Integer(3)])]
-            ))
+            edn_many!("#{,,,, 1 , 2, 3 ,         }"),
+            vec![Set(hashset![Integer(1), Integer(2), Integer(3)])]
         );
     }
 
     #[test]
     fn parses_a_real_one() {
-        let mut edn = std::fs::File::open("./fixtures/deps.edn").unwrap();
-        let mut buf = Vec::new();
-        edn.read_to_end(&mut buf).unwrap();
         let start = std::time::Instant::now();
-        let embedded_res = edn_any(&mut buf);
+        let embedded_res = edn!(DEPS_DOT_EDN);
         let end = std::time::Instant::now();
 
         println!("{:?}", end - start);
 
         assert_eq!(
             embedded_res,
-            Ok((
-                vec!(10).as_slice(),
-                Some(Map(hashmap!(
-                    Keyword("paths".to_string()),
-                    Vector(vec!(String("resources"), String("src"))),
-                    Keyword("deps".to_string()),
+            Map(hashmap!(
+                Keyword("paths".to_string()),
+                Vector(vec!(
+                    String("resources".to_string()),
+                    String("src".to_string())
+                )),
+                Keyword("deps".to_string()),
+                Map(hashmap!(
+                    Symbol("org.clojure/clojure".to_string()),
                     Map(hashmap!(
-                        Symbol("org.clojure/clojure".to_string()),
+                        Keyword("mvn/version".to_string()),
+                        String("1.10.0".to_string())
+                    )),
+                    Symbol("instaparse".to_string()),
+                    Map(hashmap!(
+                        Keyword("mvn/version".to_string()),
+                        String("1.4.9".to_string())
+                    )),
+                    Symbol("quil".to_string()),
+                    Map(hashmap!(
+                        Keyword("mvn/version".to_string()),
+                        String("2.8.0".to_string()),
+                        Keyword("exclusions".to_string()),
+                        Vector(vec!(Symbol("com.lowagie/itext".to_string())))
+                    ),),
+                    Symbol("com.hypirion/clj-xchart".to_string()),
+                    Map(hashmap!(
+                        Keyword("mvn/version".to_string()),
+                        String("0.2.0".to_string())
+                    )),
+                    Symbol("net.mikera/core.matrix".to_string()),
+                    Map(hashmap!(
+                        Keyword("mvn/version".to_string()),
+                        String("0.62.0".to_string())
+                    )),
+                    Symbol("net.mikera/vectorz-clj".to_string()),
+                    Map(hashmap!(
+                        Keyword("mvn/version".to_string()),
+                        String("0.48.0".to_string())
+                    ))
+                )),
+                Keyword("aliases".to_string()),
+                Map(hashmap!(
+                    Keyword("more-mem".to_string()),
+                    Map(hashmap!(
+                        Keyword("jvm-opts".to_string()),
+                        Vector(vec!(String("-Xmx12G -Xms12G".to_string())))
+                    ),),
+                    Keyword("test".to_string()),
+                    Map(hashmap!(
+                        Keyword("extra-paths".to_string()),
+                        Vector(vec!(String("test".to_string()))),
+                        Keyword("extra-deps".to_string()),
                         Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("1.10.0")
-                        )),
-                        Symbol("instaparse".to_string()),
-                        Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("1.4.9")
-                        )),
-                        Symbol("quil".to_string()),
-                        Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("2.8.0"),
-                            Keyword("exclusions".to_string()),
-                            Vector(vec!(Symbol("com.lowagie/itext".to_string())))
-                        ),),
-                        Symbol("com.hypirion/clj-xchart".to_string()),
-                        Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("0.2.0")
-                        )),
-                        Symbol("net.mikera/core.matrix".to_string()),
-                        Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("0.62.0")
-                        )),
-                        Symbol("net.mikera/vectorz-clj".to_string()),
-                        Map(hashmap!(
-                            Keyword("mvn/version".to_string()),
-                            String("0.48.0")
+                            Symbol("org.clojure/test.check".to_string()),
+                            Map(hashmap!(
+                                Keyword("mvn/version".to_string()),
+                                String("RELEASE".to_string())
+                            ))
                         ))
                     )),
-                    Keyword("aliases".to_string()),
+                    Keyword("runner".to_string()),
                     Map(hashmap!(
-                        Keyword("more-mem".to_string()),
+                        Keyword("extra-deps".to_string()),
                         Map(hashmap!(
-                            Keyword("jvm-opts".to_string()),
-                            Vector(vec!(String("-Xmx12G -Xms12G")))
-                        ),),
-                        Keyword("test".to_string()),
-                        Map(hashmap!(
-                            Keyword("extra-paths".to_string()),
-                            Vector(vec!(String("test"))),
-                            Keyword("extra-deps".to_string()),
+                            Symbol("com.cognitect/test-runner".to_string()),
                             Map(hashmap!(
-                                Symbol("org.clojure/test.check".to_string()),
-                                Map(hashmap!(
-                                    Keyword("mvn/version".to_string()),
-                                    String("RELEASE")
-                                ))
-                            ))
-                        )),
-                        Keyword("runner".to_string()),
-                        Map(hashmap!(
-                            Keyword("extra-deps".to_string()),
-                            Map(hashmap!(
-                                Symbol("com.cognitect/test-runner".to_string()),
-                                Map(hashmap!(
-                                    Keyword("git/url".to_string()),
-                                    String("https://github.com/cognitect-labs/test-runner"),
-                                    Keyword("sha".to_string()),
-                                    String("76568540e7f40268ad2b646110f237a60295fa3c")
-                                ),)
-                            )),
-                            Keyword("main-opts".to_string()),
-                            Vector(vec!(
-                                String("-m"),
-                                String("cognitect.test-runner"),
-                                String("-d"),
-                                String("test")
+                                Keyword("git/url".to_string()),
+                                String("https://github.com/cognitect-labs/test-runner".to_string()),
+                                Keyword("sha".to_string()),
+                                String("76568540e7f40268ad2b646110f237a60295fa3c".to_string())
                             ),)
-                        ))
-                    ),)
-                )))
+                        )),
+                        Keyword("main-opts".to_string()),
+                        Vector(vec!(
+                            String("-m".to_string()),
+                            String("cognitect.test-runner".to_string()),
+                            String("-d".to_string()),
+                            String("test".to_string())
+                        ),)
+                    ))
+                ),)
             ))
         )
     }
@@ -1052,8 +1085,8 @@ mod tests {
         assert_ne!(Bool(true), Bool(false));
 
         // String(&'a str),
-        assert_eq!(String("a"), String("a"));
-        assert_ne!(String("a"), String("z"));
+        assert_eq!(String("a".to_string()), String("a".to_string()));
+        assert_ne!(String("a".to_string()), String("z".to_string()));
 
         // Character(char),
         assert_eq!(Character('a'), Character('a'));
@@ -1072,8 +1105,8 @@ mod tests {
         assert_ne!(Integer(1), Integer(2));
 
         // Float(f64),
-        assert_eq!(Float(32.0), Float(32.0));
-        assert_ne!(Float(32.0), Float(84.0));
+        assert_eq!(Float(32.0.into()), Float(32.0.into()));
+        assert_ne!(Float(32.0.into()), Float(84.0.into()));
 
         // Decimal(rust_decimal::Decimal),
         assert_eq!(
@@ -1086,13 +1119,13 @@ mod tests {
         );
         assert_ne!(
             Decimal(rust_decimal::Decimal::from_str("32.0").unwrap()),
-            Float(32.0)
+            Float(32.0.into())
         );
 
         // List(Vec<Edn<'a>>),
         assert_eq!(List(vec![]), List(vec![]));
         assert_eq!(List(vec![Integer(1)]), List(vec![Integer(1)]));
-        assert_ne!(List(vec![Integer(1)]), List(vec![Float(1.0444444)]));
+        assert_ne!(List(vec![Integer(1)]), List(vec![Float(1.0444444.into())]));
 
         // Vector(Vec<Edn<'a>>),
         assert_eq!(Vector(vec![]), Vector(vec![]));
@@ -1119,8 +1152,8 @@ mod tests {
             ))
         );
         assert_ne!(
-            Map(hashmap!(Keyword("a".to_string()), Float(2.1))),
-            Map(hashmap!(Keyword("a".to_string()), Float(1.2)))
+            Map(hashmap!(Keyword("a".to_string()), Float(2.1.into()))),
+            Map(hashmap!(Keyword("a".to_string()), Float(1.2.into())))
         );
 
         // Set(HashSet<Edn<'a>>),
@@ -1131,17 +1164,17 @@ mod tests {
 
     #[test]
     fn parses_ascii_stl_src() {
-        let mut edn = std::fs::File::open("./fixtures/ascii_stl.clj").unwrap();
-        let mut buf = Vec::new();
-        edn.read_to_end(&mut buf).unwrap();
         let start = std::time::Instant::now();
-        let embedded_res = edn_all(&mut buf);
+        let result = edn_many!(ASCII_STL);
         let end = std::time::Instant::now();
 
         println!("ascii_stl_src time: {:?}", end - start);
 
-        let (remaining, result) = embedded_res.unwrap();
-        assert!(remaining.is_empty());
         assert_eq!(result.len(), 6);
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(Edn::Nil, edn!(""))
     }
 }
