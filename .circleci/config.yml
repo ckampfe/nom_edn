@@ -28,3 +28,6 @@ jobs:
       - run:
           name: Test
           command: cargo test --all && cargo test --no-default-features --features=im-rc
+      - run:
+          name: Benchmarks
+          command: cargo bench || true

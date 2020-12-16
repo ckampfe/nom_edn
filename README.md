@@ -49,7 +49,7 @@ What's built so far:
 - [x] maps
 - [x] sets
 - [x] comments (;)
-- [x] discard (#_)
+- [x] discard (#\_)
 - [ ] builtin tagged elements (inst, uuid, etc)
 - [ ] user-defined tagged elements
 - [x] commas as whitespace
@@ -59,4 +59,4 @@ What's built so far:
 - [ ] Investigate/port some of Clojure's reader tests: https://github.com/clojure/clojure/blob/master/test/clojure/test_clojure/reader.cljc
 - [ ] get rid of as many `.unwrap()`s as possible
 - [x] optional hashbrown for hashmaps/hashsets instead of stdlib
-- [ ] benchmarking for fun
+- [x] benchmarking for fun
