@@ -1,5 +1,4 @@
-nom_edn
-=======
+# nom_edn
 
 [![CircleCI](https://circleci.com/gh/ckampfe/nom_edn.svg?style=svg)](https://circleci.com/gh/ckampfe/nom_edn)
 
@@ -15,16 +14,16 @@ Here's a test as an example:
 
 ```rust
 #[test]
-fn parses_nested_maps_values() {
+fn map_nested_values() {
     let map_str = "{:a [1 2 4.01]}";
-    let map_res = edn_map(map_str.as_bytes());
+    let map_res = edn_map(map_str);
     assert_eq!(
         map_res,
         Ok((
-            vec!().as_slice(),
+            "",
             Map(hashmap!(
                 Keyword("a".to_string()),
-                Vector(vec!(Integer(1), Integer(2), Float(4.01)))
+                Vector(vec!(Integer(1), Integer(2), Float(4.01.into())))
             ))
         ))
     );
@@ -54,9 +53,6 @@ What's built so far:
 - [ ] builtin tagged elements (inst, uuid, etc)
 - [ ] user-defined tagged elements
 - [x] commas as whitespace
-- [ ] a real public API
-- [ ] real Rust trait implementations of `Hash`/`Eq` for `Edn` (stub impls right now)
-- [ ] tests to show UTF-8 compliance
 - [ ] tests of streaming
 - [ ] better tests around namespaced keywords/symbols
 - [ ] real-world tests of a few real (large) source files
