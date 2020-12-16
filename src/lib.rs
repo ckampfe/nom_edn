@@ -373,7 +373,7 @@ mod tests {
                     hm.insert($x, $y);
                 )*
 
-                    hm
+                hm
             }
         };
     }
@@ -390,20 +390,20 @@ mod tests {
                     hs.insert($x);
                 )*
 
-                    hs
+                hs
             }
         };
     }
 
     #[test]
-    fn parses_nil() {
+    fn nil() {
         let nil = "nil";
         let res = edn_nil(nil.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), Edn::Nil)));
     }
 
     #[test]
-    fn parses_bools() {
+    fn bool() {
         let truestr = "true";
         let falsestr = "false";
         let trueres = edn_bool(truestr.as_bytes());
@@ -413,14 +413,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_keywords() {
+    fn keyword() {
         let keystr = ":a-kw";
         let res = nom::combinator::complete(edn_keyword)(keystr.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), Keyword("a-kw".to_string()))));
     }
 
     #[test]
-    fn parses_namespaced_keywords() {
+    fn keyword_namespaced() {
         let keystr = ":org.clojure/clojure";
         let res = nom::combinator::complete(edn_keyword)(keystr.as_bytes());
         assert_eq!(
@@ -433,14 +433,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_ints() {
+    fn int() {
         let intstr = "1";
         let res = edn_int(intstr.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), Integer(1))));
     }
 
     #[test]
-    fn parses_floats() {
+    fn float() {
         let negative_0 = -0.0f64;
         let negative_1 = -1.0f64;
         let negative_120_000 = -120_000.0;
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_decimals() {
+    fn decimal() {
         assert_eq!(
             edn_float("0.0M".as_bytes()),
             Ok((
@@ -490,14 +490,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_symbols() {
+    fn symbol() {
         let symstr = "a-sym";
         let res = edn_symbol(symstr.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), Symbol("a-sym".to_string()))));
     }
 
     #[test]
-    fn parses_namedspaced_symbols() {
+    fn symbol_namedspaced() {
         let symstr = "org.clojure/clojure";
         let res = edn_symbol(symstr.as_bytes());
         assert_eq!(
@@ -507,14 +507,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_strings() {
+    fn string() {
         let strstr = "\"hello\"";
         let res = edn_string(strstr.as_bytes());
         assert_eq!(res, Ok((vec!().as_slice(), String("hello".to_string()))));
     }
 
     #[test]
-    fn parses_strings_with_escapes() {
+    fn string_escapes() {
         let mut embedded_str = std::fs::File::open("./fixtures/embedded_str").unwrap();
         // let embedded_str = "\"hel\"lo\"";
         let mut buf = Vec::new();
@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_with_unicode_literals() {
+    fn char_unicode_literals() {
         let charstr1 = "\\u0065";
         let charstr2 = "\\u0177";
         let res1 = edn_char(charstr1.as_bytes());
@@ -537,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_ascii_chars() {
+    fn char_ascii() {
         let charstr1 = b"\\a";
         let charstr2 = b"\\8";
         let res1 = edn_char(charstr1);
@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_chars_with_special_sequence_literals() {
+    fn char_special_sequence_literals() {
         let charstr_newline = "\\newline";
         let res1 = edn_char(charstr_newline.as_bytes());
         assert_eq!(res1, Ok((vec!().as_slice(), Character('\n'))));
@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_homogenous_lists() {
+    fn list_homogenous() {
         let list_str = "(:a :b :c)";
         let list_res = edn_list(list_str.as_bytes());
         assert_eq!(
@@ -580,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_heterogenous_lists() {
+    fn list_heterogenous() {
         let list_str = "(:a b true false some-sym :c)";
         let list_res = edn_list(list_str.as_bytes());
         assert_eq!(
@@ -600,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_heterogenous_nested_lists() {
+    fn list_heterogenous_nested() {
         let list_str = "(:a b (1 2 5 :e) true false [[] 232 ()] some-sym :c)";
         let list_res = edn_list(list_str.as_bytes());
         assert_eq!(
@@ -627,14 +627,14 @@ mod tests {
     }
 
     #[test]
-    fn lists_must_have_whitespace() {
+    fn list_whitespace() {
         let list_str = b"(\"hello\"abc)";
         let list_res = edn_vector(list_str);
         assert!(list_res.is_err());
     }
 
     #[test]
-    fn parses_homogenous_vectors() {
+    fn vector_homogenous() {
         let vector_str = "[:a :b :c]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(
@@ -651,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_heterogenous_vectors() {
+    fn vector_heterogenous() {
         let vector_str = "[:a b 1 true false some-sym 44444 :c]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(
@@ -673,14 +673,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_empty_vector() {
+    fn vector_empty() {
         let vector_str = "[]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(vector_res, Ok((vec!().as_slice(), Vector(vec!()))));
     }
 
     #[test]
-    fn vectors_can_have_varargs() {
+    fn vector_varargs() {
         let vector_str = b"[& args]";
         let vector_res = edn_vector(vector_str);
         assert_eq!(
@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_heterogenous_nested_vectors() {
+    fn vector_heterogenous_nested() {
         let vector_str = "[:a b true false [[] 232 ()] some-sym :c]";
         let vector_res = edn_vector(vector_str.as_bytes());
         assert_eq!(
@@ -714,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_maps() {
+    fn map() {
         let map_str = "{:a 1}";
         let map_res = edn_map(map_str.as_bytes());
         assert_eq!(
@@ -727,14 +727,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_empty_maps() {
+    fn map_empty() {
         let map_str = "{}";
         let map_res = edn_map(map_str.as_bytes());
         assert_eq!(map_res, Ok((vec!().as_slice(), Map(hashmap!()))));
     }
 
     #[test]
-    fn parses_nested_maps_values() {
+    fn map_nested_values() {
         let map_str = "{:a [1 2 4.01]}";
         let map_res = edn_map(map_str.as_bytes());
         assert_eq!(
@@ -750,27 +750,35 @@ mod tests {
     }
 
     #[test]
-    fn parses_nested_maps_keys() {
-        let map_str = "{[1 2 3] :a\n {} :bcd {} :zzzzzzzz}"; // :bcd should be gone, as :zzzzzzzz overwrites
-        let map_res = edn_map(map_str.as_bytes());
+    fn map_nested_keys() {
+        let map_str = "{[1 2 3] :a\n {} :bcd {} :zzzzzzzz}";
+        let (map_remaining, map_res) = edn_map(map_str.as_bytes()).unwrap();
+
+        // :bcd should be gone, as :zzzzzzzz overwrites
+        assert!(match &map_res {
+            Map(m) => !m
+                .values()
+                .collect::<HashSet<&Edn>>()
+                .contains(&Symbol("bcd".into())),
+            _ => panic!(),
+        });
+
         assert_eq!(
-            map_res,
-            Ok((
+            (map_remaining, map_res),
+            (
                 vec!().as_slice(),
                 Map(hashmap!(
                     Vector(vec!(Integer(1), Integer(2), Integer(3))),
                     Keyword("a".to_string()),
                     Map(hashmap!()),
-                    Keyword("bcd".to_string()),
-                    Map(hashmap!()),
                     Keyword("zzzzzzzz".to_string())
                 ))
-            ))
+            )
         );
     }
 
     #[test]
-    fn parses_sets() {
+    fn set() {
         let set_str = "#{:a 1}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -783,14 +791,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_empty_sets() {
+    fn set_empty() {
         let set_str = "#{}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(set_res, Ok((vec!().as_slice(), Set(hashset!()))));
     }
 
     #[test]
-    fn parses_nested_sets_values() {
+    fn set_nested_values() {
         let set_str = "#{:a [1 2 3]}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -806,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_nested_sets_keys() {
+    fn set_nested_keys() {
         let set_str = "#{[1 2 3] :a\n {} :bcd {} #{} [] (1 2 #{}) :zzzzzzzz}"; // only one nested empty map
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -828,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_sets_with_leading_whitespace() {
+    fn set_leading_whitespace() {
         let set_str = "#{,,,1 2 5}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -841,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_sets_with_trailing_whitespace() {
+    fn set_trailing_whitespace() {
         let set_str = "#{1 2 5,, ,}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -854,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_sets_with_leading_and_trailing_whitespace() {
+    fn set_leading_and_trailing_whitespace() {
         let set_str = "#{ ,,      ,,   1 2 5,, ,}";
         let set_res = edn_set(set_str.as_bytes());
         assert_eq!(
@@ -867,7 +875,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_discard_sequence() {
+    fn discard_sequence() {
         // only term is discarded results in
         // an empty, but valid result
         assert_eq!(edn_any(b"#_{:a :b :c :d}"), Ok((vec!().as_slice(), None)));
@@ -905,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_comments_in_various_positions() {
+    fn comments() {
         // with trailing newline
         assert_eq!(
             edn_comment(b";; this is a comment and should not appear\n"),
@@ -947,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn commas_are_whitespace() {
+    fn whitespace_commas() {
         // lists
         assert_eq!(
             edn_many!("(,,1,, 2 ,, 3,,,,)"),
@@ -979,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_a_real_one() {
+    fn real_edn() {
         let start = std::time::Instant::now();
         let embedded_res = edn!(DEPS_DOT_EDN);
         let end = std::time::Instant::now();
@@ -1133,6 +1141,7 @@ mod tests {
         assert_ne!(Vector(vec![Integer(1)]), List(vec![Integer(1)]));
 
         // Map(HashMap<Edn<'a>, Edn<'a>>),
+        assert_eq!(Map(hashmap!()), Map(hashmap!()));
         assert_eq!(
             Map(hashmap!(Keyword("a".to_string()), Integer(1))),
             Map(hashmap!(Keyword("a".to_string()), Integer(1)))
