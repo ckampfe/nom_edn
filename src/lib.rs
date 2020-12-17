@@ -1,9 +1,13 @@
 use nom::branch::alt;
-use nom::bytes::complete::{escaped, is_a, tag};
-use nom::character::complete::{anychar, none_of, one_of};
-use nom::character::is_alphanumeric;
+use nom::bytes::complete::{escaped, is_a, tag, take_until, take_while1};
+use nom::character::complete::{
+    anychar, digit1, line_ending, none_of, not_line_ending, one_of, satisfy,
+};
+use nom::character::{is_alphabetic, is_alphanumeric};
 use nom::combinator::{complete, map, not, opt, peek, recognize, rest, value};
-use nom::multi::{fold_many1, many0};
+use nom::error::{FromExternalError, VerboseError};
+use nom::multi::{fold_many1, many0, many1};
+use nom::number::complete::double;
 use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::{FindToken, Finish, IResult, InputTakeAtPosition};
 use std::str::FromStr;
@@ -36,8 +40,27 @@ pub enum Edn {
     // There could be circumstances where one would want to
     // capture comment data.
     Comment,
+    Tag(Box<Tag>),
     // TODO: handle tagged elements
 }
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum Tag {
+    BuiltIn(BuiltInTag),
+    UserDefined {
+        prefix: String,
+        name: String,
+        element: Edn,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum BuiltInTag {
+    Inst(chrono::DateTime<chrono::offset::FixedOffset>),
+    UUID(uuid::Uuid),
+}
+
+pub struct InvalidTagElementError;
 
 #[macro_export]
 macro_rules! edn {
@@ -69,9 +92,9 @@ pub fn parse_edn_many<'a>(input: &'a str) -> Result<Vec<Edn>, nom::error::Verbos
     let (s, _) = opt(space_or_comma)(input).finish()?;
 
     let (_s, edn) = many0(delimited(
-        opt(many0(nom::character::complete::line_ending)),
+        opt(many0(line_ending)),
         complete(edn_any),
-        opt(many0(nom::character::complete::line_ending)),
+        opt(many0(line_ending)),
     ))(s)
     .finish()?;
 
@@ -83,7 +106,7 @@ fn space_or_comma(s: &str) -> IResult<&str, &str, nom::error::VerboseError<&str>
 }
 
 fn edn_discard_sequence(s: &str) -> IResult<&str, Option<Edn>, nom::error::VerboseError<&str>> {
-    let (s, _) = preceded(nom::bytes::complete::tag("#_"), recognize(edn_any))(s)?;
+    let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
 
     Ok((s, None))
 }
@@ -94,24 +117,17 @@ fn edn_nil(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>>
 }
 
 fn edn_bool(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
-    let (s, v) = map(alt((tag("true"), tag("false"))), |value| match value {
-        _ if value == "true" => Edn::Bool(true),
-        _ if value == "false" => Edn::Bool(false),
-        _ => panic!("nonbool matched, definitely an error."),
-    })(s)?;
+    let (s, v) = alt((
+        map(tag("true"), |_| Edn::Bool(true)),
+        map(tag("false"), |_| Edn::Bool(false)),
+    ))(s)?;
 
     Ok((s, v))
 }
 
 fn edn_int(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, i) = map(
-        pair(
-            opt(alt((
-                nom::bytes::complete::tag("+"),
-                nom::bytes::complete::tag("-"),
-            ))),
-            nom::character::complete::digit1,
-        ),
+        pair(opt(alt((tag("+"), tag("-")))), digit1),
         |(sign, digits): (Option<&str>, &str)| {
             let i = if let Some(s) = sign {
                 let nstr = digits;
@@ -130,20 +146,16 @@ fn edn_int(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
         },
     )(s)?;
 
-    let (s, _) = not(nom::bytes::complete::tag("."))(s)?;
+    let (s, _) = not(tag("."))(s)?;
 
     Ok((s, i))
 }
 
 fn edn_float(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, f) = alt((
-        map(
-            pair(
-                recognize(nom::number::complete::double),
-                nom::bytes::complete::tag("M"),
-            ),
-            |(d, _): (&str, &str)| Edn::Decimal(rust_decimal::Decimal::from_str(d).unwrap()),
-        ),
+        map(pair(recognize(double), tag("M")), |(d, _): (&str, &str)| {
+            Edn::Decimal(rust_decimal::Decimal::from_str(d).unwrap())
+        }),
         map(nom::number::complete::double, |d| Edn::Float(d.into())),
     ))(s)?;
 
@@ -182,12 +194,9 @@ fn edn_char(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<
 fn edn_keyword(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, _) = tag(":")(s)?;
 
-    let mut optional_namespace = opt(pair(
-        nom::bytes::complete::take_while1(matches_identifier),
-        tag("/"),
-    ));
+    let mut optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
+    let (s, sym) = take_while1(matches_identifier)(s)?;
 
     if let Some((ns, slash)) = namespace {
         Ok((s, Edn::Keyword(vec![ns, slash, sym].concat())))
@@ -199,13 +208,9 @@ fn edn_keyword(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseErr
 fn edn_symbol(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     peek(not(tag(":")))(s)?;
 
-    let mut optional_namespace = opt(pair(
-        nom::bytes::complete::take_while1(matches_identifier),
-        nom::bytes::complete::tag("/"),
-    ));
+    let mut optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    // let (s, sym) = nom::bytes::complete::take_while1(matches_identifier)(s)?;
-    let (s, sym) = nom::multi::many1(nom::character::complete::satisfy(matches_identifier))(s)?;
+    let (s, sym) = many1(satisfy(matches_identifier))(s)?;
     let sym: String = sym.iter().collect();
 
     if let Some((ns, slash)) = namespace {
@@ -216,27 +221,27 @@ fn edn_symbol(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseErro
 }
 
 fn edn_list(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
-    let (s, _) = nom::bytes::complete::tag("(")(s)?;
+    let (s, _) = tag("(")(s)?;
 
     let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
 
-    let (s, _) = nom::bytes::complete::tag(")")(s)?;
+    let (s, _) = tag(")")(s)?;
 
     Ok((s, Edn::List(elements.into_iter().flatten().collect())))
 }
 
 fn edn_vector(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
-    let (s, _) = nom::bytes::complete::tag("[")(s)?;
+    let (s, _) = tag("[")(s)?;
 
     let (s, elements) = many0(delimited(opt(space_or_comma), edn_any, opt(space_or_comma)))(s)?;
 
-    let (s, _) = nom::bytes::complete::tag("]")(s)?;
+    let (s, _) = tag("]")(s)?;
 
     Ok((s, Edn::Vector(elements.into_iter().flatten().collect())))
 }
 
 fn edn_map(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
-    let (s, _) = nom::bytes::complete::tag("{")(s)?;
+    let (s, _) = tag("{")(s)?;
 
     let (s, map) = opt(fold_many1(
         pair(
@@ -261,13 +266,13 @@ fn edn_map(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
         },
     ))(s)?;
 
-    let (s, _) = nom::bytes::complete::tag("}")(s)?;
+    let (s, _) = tag("}")(s)?;
 
     Ok((s, Edn::Map(map.unwrap_or_else(HashMap::new))))
 }
 
 fn edn_set(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
-    let (s, _) = nom::bytes::complete::tag("#{")(s)?;
+    let (s, _) = tag("#{")(s)?;
 
     let (s, set) = opt(fold_many1(
         delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
@@ -281,33 +286,99 @@ fn edn_set(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
         },
     ))(s)?;
 
-    let (s, _) = nom::bytes::complete::tag("}")(s)?;
+    let (s, _) = tag("}")(s)?;
 
     Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
 }
 
 fn edn_comment(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, c) = preceded(
-        nom::bytes::complete::tag(";"),
+        tag(";"),
         value(
             Edn::Comment,
-            alt((
-                alt((
-                    terminated(
-                        nom::bytes::complete::take_until("\n"),
-                        nom::bytes::complete::tag("\n"),
-                    ),
-                    terminated(
-                        nom::bytes::complete::take_until("\r\n"),
-                        nom::bytes::complete::tag("\r\n"),
-                    ),
-                )),
-                rest,
-            )),
+            alt((terminated(not_line_ending, line_ending), rest)),
         ),
     )(s)?;
 
     Ok((s, c))
+}
+
+fn edn_tag(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
+    let (s, _) = preceded(tag("#"), peek(satisfy(|c: char| is_alphabetic(c as u8))))(s)?;
+
+    let (s, tag) = alt((edn_tag_inst, edn_tag_uuid, edn_tag_user_defined))(s)?;
+
+    Ok((s, Edn::Tag(Box::new(tag))))
+}
+
+fn edn_tag_inst(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&str>> {
+    let (s, _) = tag("inst")(s)?;
+    let (s, _) = space_or_comma(s)?;
+    let (s, _) = tag("\"")(s)?;
+    let (s, as_str) = take_until("\"")(s)?;
+    let (s, _) = tag("\"")(s)?;
+
+    let datetime = chrono::DateTime::parse_from_rfc3339(as_str).map_err(|e| {
+        nom::Err::Error(nom::error::VerboseError::from_external_error(
+            s,
+            nom::error::ErrorKind::Tag,
+            e,
+        ))
+    })?;
+
+    let tag = Tag::BuiltIn(BuiltInTag::Inst(datetime));
+
+    Ok((s, tag))
+}
+
+fn edn_tag_uuid(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&str>> {
+    let (s, _) = tag("uuid")(s)?;
+    let (s, _) = space_or_comma(s)?;
+    let (s, _) = tag("\"")(s)?;
+    let (s, as_str) = take_until("\"")(s)?;
+    let (s, _) = tag("\"")(s)?;
+
+    let uuid = uuid::Uuid::from_str(as_str).map_err(|e| {
+        nom::Err::Error(nom::error::VerboseError::from_external_error(
+            s,
+            nom::error::ErrorKind::Tag,
+            e,
+        ))
+    })?;
+
+    let tag = Tag::BuiltIn(BuiltInTag::UUID(uuid));
+
+    Ok((s, tag))
+}
+
+fn edn_tag_user_defined(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&str>> {
+    let (s, prefix) = take_while1(matches_identifier)(s)?;
+
+    let (s, _) = tag("/")(s)?;
+
+    let (s, name) = take_while1(matches_identifier)(s)?;
+
+    let (s, _) = space_or_comma(s)?;
+
+    match edn_any(s)? {
+        (s, Some(Edn::Tag(_))) | (s, Some(Edn::Comment)) | (s, None) => {
+            Err(nom::Err::Error(VerboseError::from_external_error(
+                s,
+                nom::error::ErrorKind::Tag,
+                InvalidTagElementError,
+            )))
+        }
+
+        (s, Some(element)) => {
+            let tag = Tag::UserDefined {
+                prefix: prefix.to_owned(),
+                name: name.to_owned(),
+                element,
+            };
+
+            Ok((s, tag))
+        }
+    }
 }
 
 fn edn_any(s: &str) -> IResult<&str, Option<crate::Edn>, nom::error::VerboseError<&str>> {
@@ -325,6 +396,7 @@ fn edn_any(s: &str) -> IResult<&str, Option<crate::Edn>, nom::error::VerboseErro
         map(edn_string, Some),
         map(edn_symbol, Some),
         map(edn_char, Some),
+        map(edn_tag, Some),
         map(edn_comment, |_| None),
     ))(s)?;
 
@@ -870,6 +942,137 @@ mod tests {
                 ))
             ))
         )
+    }
+
+    #[test]
+    fn tags_inst() {
+        let inst = chrono::DateTime::parse_from_rfc3339("1985-04-12T23:20:50.52Z").unwrap();
+        assert_eq!(
+            edn_tag(r###"#inst "1985-04-12T23:20:50.52Z""###),
+            Ok((
+                "",
+                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::Inst(inst))))
+            ))
+        );
+        assert_eq!(
+            edn_tag("#inst \t \n\n \r\n \t\t \"1985-04-12T23:20:50.52Z\""),
+            Ok((
+                "",
+                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::Inst(inst))))
+            ))
+        );
+    }
+    #[test]
+    fn tags_uuid() {
+        let uuid = uuid::Uuid::from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6").unwrap();
+        assert_eq!(
+            edn_tag("#uuid \"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\""),
+            Ok((
+                "",
+                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::UUID(uuid))))
+            ))
+        );
+    }
+
+    #[test]
+    fn tags_user_defined() {
+        // custom simple tag
+        assert_eq!(
+            edn_tag("#myapp/Foo \"string as tag element\""),
+            Ok((
+                "",
+                Edn::Tag(Box::new(crate::Tag::UserDefined {
+                    prefix: "myapp".to_string(),
+                    name: "Foo".to_string(),
+                    element: Edn::String("string as tag element".to_string())
+                }))
+            ))
+        );
+
+        // custom complex tag
+        assert_eq!(
+            edn_tag("#myapp/Foo [1, \"2\", :a_keyword]"),
+            Ok((
+                "",
+                Edn::Tag(Box::new(crate::Tag::UserDefined {
+                    prefix: "myapp".to_string(),
+                    name: "Foo".to_string(),
+                    element: Edn::Vector(vec![
+                        Edn::Integer(1),
+                        Edn::String("2".to_string()),
+                        Edn::Keyword("a_keyword".to_string())
+                    ])
+                }))
+            ))
+        );
+
+        // tags require a name
+        assert_eq!(
+            edn_tag("#myapp [1, \"2\", :a_keyword]"),
+            Err(nom::Err::Error(VerboseError {
+                errors: vec![
+                    (
+                        " [1, \"2\", :a_keyword]",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag)
+                    ),
+                    (
+                        "myapp [1, \"2\", :a_keyword]",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Alt)
+                    )
+                ]
+            }))
+        );
+
+        // tags require a prefix
+        assert_eq!(
+            edn_tag("#Foo [1, \"2\", :a_keyword]"),
+            Err(nom::Err::Error(VerboseError {
+                errors: vec![
+                    (
+                        " [1, \"2\", :a_keyword]",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag)
+                    ),
+                    (
+                        "Foo [1, \"2\", :a_keyword]",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Alt)
+                    )
+                ]
+            }))
+        );
+
+        // tags can't be tag elements
+        assert_eq!(
+            edn_tag("#myapp/Foo #myapp/ASecondTag []"),
+            Err(nom::Err::Error(VerboseError {
+                errors: vec![
+                    (
+                        "",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag)
+                    ),
+                    (
+                        "myapp/Foo #myapp/ASecondTag []",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Alt)
+                    )
+                ]
+            }))
+        );
+
+        // comments can't be tag elements
+        assert_eq!(
+            edn_tag("#myapp/Foo ;; some comment"),
+            Err(nom::Err::Error(VerboseError {
+                errors: vec![
+                    (
+                        "",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag)
+                    ),
+                    (
+                        "myapp/Foo ;; some comment",
+                        nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Alt)
+                    )
+                ]
+            }))
+        );
     }
 
     #[test]

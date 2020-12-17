@@ -50,10 +50,9 @@ What's built so far:
 - [x] sets
 - [x] comments (;)
 - [x] discard (#\_)
-- [ ] builtin tagged elements (inst, uuid, etc)
-- [ ] user-defined tagged elements
+- [x] builtin tagged elements (inst, uuid, etc)
+- [x] user-defined tagged elements
 - [x] commas as whitespace
-- [ ] tests of streaming
 - [ ] better tests around namespaced keywords/symbols
 - [ ] real-world tests of a few real (large) source files
 - [ ] Investigate/port some of Clojure's reader tests: https://github.com/clojure/clojure/blob/master/test/clojure/test_clojure/reader.cljc
