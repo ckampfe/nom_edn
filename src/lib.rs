@@ -109,7 +109,7 @@ fn space_or_comma(s: &str) -> IResult<&str, &str, nom::error::VerboseError<&str>
 }
 
 fn edn_discard_sequence(s: &str) -> IResult<&str, Option<Edn>, nom::error::VerboseError<&str>> {
-    let (s, _) = preceded(tag("#_"), recognize(edn_any))(s)?;
+    let (s, _) = preceded(tag("#_"), edn_any)(s)?;
 
     Ok((s, None))
 }
