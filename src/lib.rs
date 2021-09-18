@@ -1,12 +1,12 @@
 use nom::branch::alt;
-use nom::bytes::complete::{escaped, is_a, tag, take_until, take_while1};
+use nom::bytes::complete::{escaped, tag, take_until, take_while1};
 use nom::character::complete::{
     anychar, digit1, line_ending, none_of, not_line_ending, one_of, satisfy,
 };
 use nom::character::{is_alphabetic, is_alphanumeric};
 use nom::combinator::{complete, map, not, opt, peek, recognize, rest, value};
 use nom::error::{FromExternalError, VerboseError};
-use nom::multi::{fold_many1, many0, many1};
+use nom::multi::{fold_many1, many0};
 use nom::number::complete::double;
 use nom::sequence::{delimited, pair, preceded, terminated};
 use nom::{FindToken, Finish, IResult, InputTakeAtPosition};
@@ -15,49 +15,52 @@ use std::str::FromStr;
 #[cfg(all(feature = "im", feature = "im-rc"))]
 compile_error!("features `im` and `im-rc` are mutually exclusive");
 #[cfg(feature = "im")]
-use im::{HashMap, HashSet};
+use im::{HashMap as Map, HashSet as Set};
 #[cfg(feature = "im-rc")]
-use im_rc::{HashMap, HashSet};
+use im_rc::{HashMap as Map, HashSet as Set};
+#[cfg(all(not(feature = "im"), not(feature = "im-rc")))]
+use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
-pub enum Edn {
+pub enum Edn<'edn> {
     Nil,
     Bool(bool),
-    String(String),
+    String(&'edn str),
     Character(char),
-    Symbol(String),
-    Keyword(String),
+    Symbol {
+        namespace: Option<&'edn str>,
+        name: &'edn str,
+    },
+    Keyword {
+        namespace: Option<&'edn str>,
+        name: &'edn str,
+    },
     Integer(isize),
     Float(ordered_float::OrderedFloat<f64>),
     Decimal(rust_decimal::Decimal),
-    List(Vec<Edn>),
-    Vector(Vec<Edn>),
-    Map(HashMap<Edn, Edn>),
-    Set(HashSet<Edn>),
+    List(Vec<Edn<'edn>>),
+    Vector(Vec<Edn<'edn>>),
+    Map(Map<Edn<'edn>, Edn<'edn>>),
+    Set(Set<Edn<'edn>>),
     // Right now `Comment` is a marker value that follows the edn spec
     // by ignoring any subsequent data, but in the future we could
     // make a variant of it that captures the comment data itself.
     // There could be circumstances where one would want to
     // capture comment data.
     Comment,
-    Tag(Box<Tag>),
+    Tag(Tag<'edn>),
     // TODO: handle tagged elements
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
-pub enum Tag {
-    BuiltIn(BuiltInTag),
-    UserDefined {
-        prefix: String,
-        name: String,
-        element: Edn,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
-pub enum BuiltInTag {
+pub enum Tag<'edn> {
     Inst(chrono::DateTime<chrono::offset::FixedOffset>),
     UUID(uuid::Uuid),
+    UserDefined {
+        prefix: &'edn str,
+        name: &'edn str,
+        element: Box<Edn<'edn>>,
+    },
 }
 
 pub struct InvalidTagElementError;
@@ -76,7 +79,7 @@ macro_rules! edn_many {
     };
 }
 
-pub fn parse_edn_one<'a>(input: &'a str) -> Result<Edn, nom::error::VerboseError<&'a str>> {
+pub fn parse_edn_one(input: &str) -> Result<Edn, nom::error::VerboseError<&str>> {
     if input.is_empty() {
         return Ok(Edn::Nil);
     }
@@ -88,7 +91,7 @@ pub fn parse_edn_one<'a>(input: &'a str) -> Result<Edn, nom::error::VerboseError
     }
 }
 
-pub fn parse_edn_many<'a>(input: &'a str) -> Result<Vec<Edn>, nom::error::VerboseError<&'a str>> {
+pub fn parse_edn_many(input: &str) -> Result<Vec<Edn>, nom::error::VerboseError<&str>> {
     let (s, _) = opt(space_or_comma)(input).finish()?;
 
     let (_s, edn) = many0(delimited(
@@ -166,7 +169,7 @@ fn edn_string(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&st
     let (s, _) = tag("\"")(s)?;
     let (s, string) = map(
         escaped(none_of("\"\\"), '\\', one_of("\"ntr\\")),
-        |s: &str| Edn::String(s.to_string()),
+        |s: &str| Edn::String(s),
     )(s)?;
     let (s, _) = tag("\"")(s)?;
 
@@ -194,30 +197,33 @@ fn edn_char(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<
 fn edn_keyword(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, _) = tag(":")(s)?;
 
-    let mut optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(terminated(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
     let (s, sym) = take_while1(matches_identifier)(s)?;
 
-    if let Some((ns, slash)) = namespace {
-        Ok((s, Edn::Keyword(vec![ns, slash, sym].concat())))
-    } else {
-        Ok((s, Edn::Keyword(sym.to_string())))
-    }
+    Ok((
+        s,
+        Edn::Keyword {
+            namespace,
+            name: sym,
+        },
+    ))
 }
 
 fn edn_symbol(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     peek(not(tag(":")))(s)?;
 
-    let mut optional_namespace = opt(pair(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(terminated(take_while1(matches_identifier), tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = many1(satisfy(matches_identifier))(s)?;
-    let sym: String = sym.iter().collect();
+    let (s, sym) = take_while1(matches_identifier)(s)?;
 
-    if let Some((ns, slash)) = namespace {
-        Ok((s, Edn::Symbol(vec![ns, slash, &sym].concat())))
-    } else {
-        Ok((s, Edn::Symbol(sym)))
-    }
+    Ok((
+        s,
+        Edn::Symbol {
+            namespace,
+            name: sym,
+        },
+    ))
 }
 
 fn edn_list(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
@@ -256,8 +262,8 @@ fn edn_map(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
                 opt(space_or_comma),
             ),
         ),
-        HashMap::new(),
-        |mut acc: HashMap<_, _>, (k, v)| match (k, v) {
+        Map::new,
+        |mut acc: Map<_, _>, (k, v)| match (k, v) {
             (Some(kk), Some(vv)) => {
                 acc.insert(kk, vv);
                 acc
@@ -268,7 +274,7 @@ fn edn_map(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
 
     let (s, _) = tag("}")(s)?;
 
-    Ok((s, Edn::Map(map.unwrap_or_else(HashMap::new))))
+    Ok((s, Edn::Map(map.unwrap_or_else(Map::new))))
 }
 
 fn edn_set(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
@@ -276,8 +282,8 @@ fn edn_set(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
 
     let (s, set) = opt(fold_many1(
         delimited(opt(space_or_comma), edn_any, opt(space_or_comma)),
-        HashSet::new(),
-        |mut acc: HashSet<_>, v| {
+        Set::new,
+        |mut acc: Set<_>, v| {
             if let Some(actual_v) = v {
                 acc.insert(actual_v);
             }
@@ -288,7 +294,7 @@ fn edn_set(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
 
     let (s, _) = tag("}")(s)?;
 
-    Ok((s, Edn::Set(set.unwrap_or_else(HashSet::new))))
+    Ok((s, Edn::Set(set.unwrap_or_else(Set::new))))
 }
 
 fn edn_comment(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
@@ -308,7 +314,7 @@ fn edn_tag(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>>
 
     let (s, tag) = alt((edn_tag_inst, edn_tag_uuid, edn_tag_user_defined))(s)?;
 
-    Ok((s, Edn::Tag(Box::new(tag))))
+    Ok((s, Edn::Tag(tag)))
 }
 
 fn edn_tag_inst(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&str>> {
@@ -326,7 +332,7 @@ fn edn_tag_inst(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&
         ))
     })?;
 
-    let tag = Tag::BuiltIn(BuiltInTag::Inst(datetime));
+    let tag = Tag::Inst(datetime);
 
     Ok((s, tag))
 }
@@ -346,7 +352,7 @@ fn edn_tag_uuid(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&
         ))
     })?;
 
-    let tag = Tag::BuiltIn(BuiltInTag::UUID(uuid));
+    let tag = Tag::UUID(uuid);
 
     Ok((s, tag))
 }
@@ -371,9 +377,9 @@ fn edn_tag_user_defined(s: &str) -> IResult<&str, crate::Tag, nom::error::Verbos
 
         (s, Some(element)) => {
             let tag = Tag::UserDefined {
-                prefix: prefix.to_owned(),
-                name: name.to_owned(),
-                element,
+                prefix,
+                name,
+                element: Box::new(element),
             };
 
             Ok((s, tag))
@@ -383,33 +389,38 @@ fn edn_tag_user_defined(s: &str) -> IResult<&str, crate::Tag, nom::error::Verbos
 
 fn edn_any(s: &str) -> IResult<&str, Option<crate::Edn>, nom::error::VerboseError<&str>> {
     let (s, edn) = alt((
-        edn_discard_sequence,
+        map(edn_string, Some),
+        map(edn_bool, Some),
+        map(edn_int, Some),
+        map(edn_float, Some),
+        map(edn_symbol, Some),
+        map(edn_keyword, Some),
         map(edn_nil, Some),
+        map(edn_char, Some),
         map(edn_list, Some),
         map(edn_map, Some),
         map(edn_vector, Some),
         map(edn_set, Some),
-        map(edn_int, Some),
-        map(edn_float, Some),
-        map(edn_bool, Some),
-        map(edn_keyword, Some),
-        map(edn_string, Some),
-        map(edn_symbol, Some),
-        map(edn_char, Some),
         map(edn_tag, Some),
         map(edn_comment, |_| None),
+        edn_discard_sequence,
     ))(s)?;
 
     Ok((s, edn))
 }
 
+#[inline]
 fn matches_identifier(c: char) -> bool {
     is_alphanumeric(c as u8) || c == '-' || c == '_' || c == '.' || c == '+' || c == '&'
 }
 
 // fork of https://docs.rs/nom/6.0.1/src/nom/number/complete.rs.html#1341-1361
 fn hex_u32<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, u32, E> {
-    let (i, o) = is_a(&b"0123456789abcdefABCDEF"[..])(input)?;
+    let (i, o) = take_while1(|chr| {
+        let chr = chr as u8;
+        (0x30..=0x39).contains(&chr) || (0x41..=0x46).contains(&chr) || (0x61..=0x66).contains(&chr)
+    })(input)?;
+
     // Do not parse more than 8 characters for a u32
     let (parsed, remaining) = if o.len() <= 8 {
         (o, i)
@@ -443,11 +454,11 @@ mod tests {
 
     macro_rules! hashmap {
         () => {
-            HashMap::new()
+            crate::Map::new()
         };
         ( $($x:expr, $y:expr),* ) => {
             {
-                let mut hm = HashMap::new();
+                let mut hm = crate::Map::new();
 
                 $(
                     hm.insert($x, $y);
@@ -460,11 +471,11 @@ mod tests {
 
     macro_rules! hashset {
         () => {
-            HashSet::new()
+            crate::Set::new()
         };
         ( $($x:expr),* ) => {
             {
-                let mut hs = HashSet::new();
+                let mut hs = crate::Set::new();
 
                 $(
                     hs.insert($x);
@@ -496,14 +507,32 @@ mod tests {
     fn keyword() {
         let keystr = ":a-kw";
         let res = nom::combinator::complete(edn_keyword)(keystr);
-        assert_eq!(res, Ok(("", Keyword("a-kw".to_string()))));
+        assert_eq!(
+            res,
+            Ok((
+                "",
+                Keyword {
+                    namespace: None,
+                    name: "a-kw"
+                }
+            ))
+        );
     }
 
     #[test]
     fn keyword_namespaced() {
         let keystr = ":org.clojure/clojure";
         let res = nom::combinator::complete(edn_keyword)(keystr);
-        assert_eq!(res, Ok(("", Keyword("org.clojure/clojure".to_string()))));
+        assert_eq!(
+            res,
+            Ok((
+                "",
+                Keyword {
+                    namespace: Some("org.clojure"),
+                    name: "clojure"
+                }
+            ))
+        );
     }
 
     #[test]
@@ -552,21 +581,39 @@ mod tests {
     fn symbol() {
         let symstr = "a-sym";
         let res = edn_symbol(symstr);
-        assert_eq!(res, Ok(("", Symbol("a-sym".to_string()))));
+        assert_eq!(
+            res,
+            Ok((
+                "",
+                Symbol {
+                    namespace: None,
+                    name: "a-sym"
+                }
+            ))
+        );
     }
 
     #[test]
     fn symbol_namedspaced() {
         let symstr = "org.clojure/clojure";
         let res = edn_symbol(symstr);
-        assert_eq!(res, Ok(("", Symbol("org.clojure/clojure".to_string()))));
+        assert_eq!(
+            res,
+            Ok((
+                "",
+                Symbol {
+                    namespace: Some("org.clojure"),
+                    name: "clojure"
+                }
+            ))
+        );
     }
 
     #[test]
     fn string() {
         let strstr = "\"hello\"";
         let res = edn_string(strstr);
-        assert_eq!(res, Ok(("", String("hello".to_string()))));
+        assert_eq!(res, Ok(("", String("hello"))));
     }
 
     #[test]
@@ -576,7 +623,7 @@ mod tests {
         let mut buf = std::string::String::new();
         embedded_str.read_to_string(&mut buf).unwrap();
         let embedded_res = edn_string(&mut buf);
-        assert_eq!(embedded_res, Ok(("", String("hel\\\"lo".to_string()))));
+        assert_eq!(embedded_res, Ok(("", String("hel\\\"lo"))));
     }
 
     #[test]
@@ -624,9 +671,18 @@ mod tests {
             Ok((
                 "",
                 List(vec!(
-                    Keyword("a".to_string()),
-                    Keyword("b".to_string()),
-                    Keyword("c".to_string())
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "b"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
                 ))
             ))
         );
@@ -641,12 +697,24 @@ mod tests {
             Ok((
                 "",
                 List(vec!(
-                    Keyword("a".to_string()),
-                    Symbol("b".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Symbol {
+                        namespace: None,
+                        name: "b"
+                    },
                     Bool(true),
                     Bool(false),
-                    Symbol("some-sym".to_string()),
-                    Keyword("c".to_string())
+                    Symbol {
+                        namespace: None,
+                        name: "some-sym"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
                 ))
             ))
         );
@@ -661,19 +729,34 @@ mod tests {
             Ok((
                 "",
                 List(vec!(
-                    Keyword("a".to_string()),
-                    Symbol("b".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Symbol {
+                        namespace: None,
+                        name: "b"
+                    },
                     List(vec!(
                         Integer(1),
                         Integer(2),
                         Integer(5),
-                        Keyword("e".to_string())
+                        Keyword {
+                            namespace: None,
+                            name: "e"
+                        }
                     )),
                     Bool(true),
                     Bool(false),
                     Vector(vec!(Vector(vec!()), Integer(232), List(vec!()))),
-                    Symbol("some-sym".to_string()),
-                    Keyword("c".to_string())
+                    Symbol {
+                        namespace: None,
+                        name: "some-sym"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
                 ))
             ))
         );
@@ -694,11 +777,20 @@ mod tests {
             vector_res,
             Ok((
                 "",
-                Vector(vec!(
-                    Keyword("a".to_string()),
-                    Keyword("b".to_string()),
-                    Keyword("c".to_string())
-                ))
+                Vector(vec![
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "b"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
+                ])
             ))
         );
     }
@@ -712,14 +804,26 @@ mod tests {
             Ok((
                 "",
                 Vector(vec!(
-                    Keyword("a".to_string()),
-                    Symbol("b".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Symbol {
+                        namespace: None,
+                        name: "b"
+                    },
                     Integer(1),
                     Bool(true),
                     Bool(false),
-                    Symbol("some-sym".to_string()),
+                    Symbol {
+                        namespace: None,
+                        name: "some-sym"
+                    },
                     Integer(44444),
-                    Keyword("c".to_string())
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
                 ))
             ))
         );
@@ -740,7 +844,16 @@ mod tests {
             vector_res,
             Ok((
                 "",
-                Vector(vec![Symbol("&".to_string()), Symbol("args".to_string())])
+                Vector(vec![
+                    Symbol {
+                        namespace: None,
+                        name: "&"
+                    },
+                    Symbol {
+                        namespace: None,
+                        name: "args"
+                    }
+                ])
             ))
         );
     }
@@ -754,13 +867,25 @@ mod tests {
             Ok((
                 "",
                 Vector(vec!(
-                    Keyword("a".to_string()),
-                    Symbol("b".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Symbol {
+                        namespace: None,
+                        name: "b"
+                    },
                     Bool(true),
                     Bool(false),
                     Vector(vec!(Vector(vec!()), Integer(232), List(vec!()))),
-                    Symbol("some-sym".to_string()),
-                    Keyword("c".to_string())
+                    Symbol {
+                        namespace: None,
+                        name: "some-sym"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    }
                 ))
             ))
         );
@@ -772,7 +897,16 @@ mod tests {
         let map_res = edn_map(map_str);
         assert_eq!(
             map_res,
-            Ok(("", Map(hashmap!(Keyword("a".to_string()), Integer(1)))))
+            Ok((
+                "",
+                Map(hashmap!(
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Integer(1)
+                ))
+            ))
         );
     }
 
@@ -792,7 +926,10 @@ mod tests {
             Ok((
                 "",
                 Map(hashmap!(
-                    Keyword("a".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
                     Vector(vec!(Integer(1), Integer(2), Float(4.01.into())))
                 ))
             ))
@@ -806,10 +943,10 @@ mod tests {
 
         // :bcd should be gone, as :zzzzzzzz overwrites
         assert!(match &map_res {
-            Map(m) => !m
-                .values()
-                .collect::<HashSet<&Edn>>()
-                .contains(&Symbol("bcd".into())),
+            Map(m) => !m.values().collect::<crate::Set<&Edn>>().contains(&Symbol {
+                namespace: None,
+                name: "bcd"
+            }),
             _ => panic!(),
         });
 
@@ -819,9 +956,15 @@ mod tests {
                 "",
                 Map(hashmap!(
                     Vector(vec!(Integer(1), Integer(2), Integer(3))),
-                    Keyword("a".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
                     Map(hashmap!()),
-                    Keyword("zzzzzzzz".to_string())
+                    Keyword {
+                        namespace: None,
+                        name: "zzzzzzzz"
+                    }
                 ))
             )
         );
@@ -833,7 +976,16 @@ mod tests {
         let set_res = edn_set(set_str);
         assert_eq!(
             set_res,
-            Ok(("", Set(hashset!(Keyword("a".to_string()), Integer(1)))))
+            Ok((
+                "",
+                Set(hashset!(
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
+                    Integer(1)
+                ))
+            ))
         );
     }
 
@@ -853,7 +1005,10 @@ mod tests {
             Ok((
                 "",
                 Set(hashset!(
-                    Keyword("a".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
                     Vector(vec!(Integer(1), Integer(2), Integer(3)))
                 ))
             ))
@@ -870,13 +1025,22 @@ mod tests {
                 "",
                 Set(hashset!(
                     Vector(vec!(Integer(1), Integer(2), Integer(3))),
-                    Keyword("a".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
                     Map(hashmap!()),
-                    Keyword("bcd".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "bcd"
+                    },
                     Set(hashset!()),
                     Vector(vec!()),
                     List(vec!(Integer(1), Integer(2), Set(hashset!()))),
-                    Keyword("zzzzzzzz".to_string())
+                    Keyword {
+                        namespace: None,
+                        name: "zzzzzzzz"
+                    }
                 ))
             ))
         );
@@ -935,10 +1099,19 @@ mod tests {
             Ok((
                 "",
                 Map(hashmap!(
-                    Keyword("a".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "a"
+                    },
                     Float(1.01.into()),
-                    Keyword("c".to_string()),
-                    Keyword("d".to_string())
+                    Keyword {
+                        namespace: None,
+                        name: "c"
+                    },
+                    Keyword {
+                        namespace: None,
+                        name: "d"
+                    }
                 ))
             ))
         )
@@ -949,17 +1122,11 @@ mod tests {
         let inst = chrono::DateTime::parse_from_rfc3339("1985-04-12T23:20:50.52Z").unwrap();
         assert_eq!(
             edn_tag(r###"#inst "1985-04-12T23:20:50.52Z""###),
-            Ok((
-                "",
-                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::Inst(inst))))
-            ))
+            Ok(("", Edn::Tag(crate::Tag::Inst(inst))))
         );
         assert_eq!(
             edn_tag("#inst \t \n\n \r\n \t\t \"1985-04-12T23:20:50.52Z\""),
-            Ok((
-                "",
-                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::Inst(inst))))
-            ))
+            Ok(("", Edn::Tag(crate::Tag::Inst(inst))))
         );
     }
     #[test]
@@ -967,10 +1134,7 @@ mod tests {
         let uuid = uuid::Uuid::from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6").unwrap();
         assert_eq!(
             edn_tag("#uuid \"f81d4fae-7dec-11d0-a765-00a0c91e6bf6\""),
-            Ok((
-                "",
-                Edn::Tag(Box::new(crate::Tag::BuiltIn(crate::BuiltInTag::UUID(uuid))))
-            ))
+            Ok(("", Edn::Tag(crate::Tag::UUID(uuid))))
         );
     }
 
@@ -981,11 +1145,11 @@ mod tests {
             edn_tag("#myapp/Foo \"string as tag element\""),
             Ok((
                 "",
-                Edn::Tag(Box::new(crate::Tag::UserDefined {
-                    prefix: "myapp".to_string(),
-                    name: "Foo".to_string(),
-                    element: Edn::String("string as tag element".to_string())
-                }))
+                Edn::Tag(crate::Tag::UserDefined {
+                    prefix: "myapp",
+                    name: "Foo",
+                    element: Box::new(Edn::String("string as tag element"))
+                })
             ))
         );
 
@@ -994,15 +1158,18 @@ mod tests {
             edn_tag("#myapp/Foo [1, \"2\", :a_keyword]"),
             Ok((
                 "",
-                Edn::Tag(Box::new(crate::Tag::UserDefined {
-                    prefix: "myapp".to_string(),
-                    name: "Foo".to_string(),
-                    element: Edn::Vector(vec![
+                Edn::Tag(crate::Tag::UserDefined {
+                    prefix: "myapp",
+                    name: "Foo",
+                    element: Box::new(Edn::Vector(vec![
                         Edn::Integer(1),
-                        Edn::String("2".to_string()),
-                        Edn::Keyword("a_keyword".to_string())
-                    ])
-                }))
+                        Edn::String("2"),
+                        Edn::Keyword {
+                            namespace: None,
+                            name: "a_keyword"
+                        }
+                    ]))
+                })
             ))
         );
 
@@ -1135,9 +1302,15 @@ mod tests {
         assert_eq!(
             edn_many!(",{,:a,1,,,,:b,2,}"),
             vec![Map(hashmap![
-                Keyword("a".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
                 Integer(1),
-                Keyword("b".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "b"
+                },
                 Integer(2)
             ])]
         );
@@ -1160,84 +1333,171 @@ mod tests {
         assert_eq!(
             embedded_res,
             Map(hashmap!(
-                Keyword("paths".to_string()),
-                Vector(vec!(
-                    String("resources".to_string()),
-                    String("src".to_string())
-                )),
-                Keyword("deps".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "paths"
+                },
+                Vector(vec!(String("resources"), String("src"))),
+                Keyword {
+                    namespace: None,
+                    name: "deps"
+                },
                 Map(hashmap!(
-                    Symbol("org.clojure/clojure".to_string()),
+                    Symbol {
+                        namespace: Some("org.clojure"),
+                        name: "clojure"
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("1.10.0".to_string())
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("1.10.0")
                     )),
-                    Symbol("instaparse".to_string()),
+                    Symbol {
+                        namespace: None,
+                        name: "instaparse".into()
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("1.4.9".to_string())
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("1.4.9")
                     )),
-                    Symbol("quil".to_string()),
+                    Symbol {
+                        namespace: None,
+                        name: "quil"
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("2.8.0".to_string()),
-                        Keyword("exclusions".to_string()),
-                        Vector(vec!(Symbol("com.lowagie/itext".to_string())))
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("2.8.0"),
+                        Keyword {
+                            namespace: None,
+                            name: "exclusions"
+                        },
+                        Vector(vec!(Symbol {
+                            namespace: Some("com.lowagie"),
+                            name: "itext"
+                        }))
                     ),),
-                    Symbol("com.hypirion/clj-xchart".to_string()),
+                    Symbol {
+                        namespace: Some("com.hypirion"),
+                        name: "clj-xchart"
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("0.2.0".to_string())
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("0.2.0")
                     )),
-                    Symbol("net.mikera/core.matrix".to_string()),
+                    Symbol {
+                        namespace: Some("net.mikera"),
+                        name: "core.matrix"
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("0.62.0".to_string())
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("0.62.0")
                     )),
-                    Symbol("net.mikera/vectorz-clj".to_string()),
+                    Symbol {
+                        namespace: Some("net.mikera"),
+                        name: "vectorz-clj"
+                    },
                     Map(hashmap!(
-                        Keyword("mvn/version".to_string()),
-                        String("0.48.0".to_string())
+                        Keyword {
+                            namespace: Some("mvn"),
+                            name: "version"
+                        },
+                        String("0.48.0")
                     ))
                 )),
-                Keyword("aliases".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "aliases"
+                },
                 Map(hashmap!(
-                    Keyword("more-mem".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "more-mem"
+                    },
                     Map(hashmap!(
-                        Keyword("jvm-opts".to_string()),
-                        Vector(vec!(String("-Xmx12G -Xms12G".to_string())))
+                        Keyword {
+                            namespace: None,
+                            name: "jvm-opts"
+                        },
+                        Vector(vec!(String("-Xmx12G -Xms12G")))
                     ),),
-                    Keyword("test".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "test"
+                    },
                     Map(hashmap!(
-                        Keyword("extra-paths".to_string()),
-                        Vector(vec!(String("test".to_string()))),
-                        Keyword("extra-deps".to_string()),
+                        Keyword {
+                            namespace: None,
+                            name: "extra-paths"
+                        },
+                        Vector(vec!(String("test"))),
+                        Keyword {
+                            namespace: None,
+                            name: "extra-deps"
+                        },
                         Map(hashmap!(
-                            Symbol("org.clojure/test.check".to_string()),
+                            Symbol {
+                                namespace: Some("org.clojure"),
+                                name: "test.check"
+                            },
                             Map(hashmap!(
-                                Keyword("mvn/version".to_string()),
-                                String("RELEASE".to_string())
+                                Keyword {
+                                    namespace: Some("mvn"),
+                                    name: "version"
+                                },
+                                String("RELEASE")
                             ))
                         ))
                     )),
-                    Keyword("runner".to_string()),
+                    Keyword {
+                        namespace: None,
+                        name: "runner"
+                    },
                     Map(hashmap!(
-                        Keyword("extra-deps".to_string()),
+                        Keyword {
+                            namespace: None,
+                            name: "extra-deps"
+                        },
                         Map(hashmap!(
-                            Symbol("com.cognitect/test-runner".to_string()),
+                            Symbol {
+                                namespace: Some("com.cognitect"),
+                                name: "test-runner"
+                            },
                             Map(hashmap!(
-                                Keyword("git/url".to_string()),
-                                String("https://github.com/cognitect-labs/test-runner".to_string()),
-                                Keyword("sha".to_string()),
-                                String("76568540e7f40268ad2b646110f237a60295fa3c".to_string())
+                                Keyword {
+                                    namespace: Some("git"),
+                                    name: "url"
+                                },
+                                String("https://github.com/cognitect-labs/test-runner"),
+                                Keyword {
+                                    namespace: None,
+                                    name: "sha"
+                                },
+                                String("76568540e7f40268ad2b646110f237a60295fa3c")
                             ),)
                         )),
-                        Keyword("main-opts".to_string()),
+                        Keyword {
+                            namespace: None,
+                            name: "main-opts"
+                        },
                         Vector(vec!(
-                            String("-m".to_string()),
-                            String("cognitect.test-runner".to_string()),
-                            String("-d".to_string()),
-                            String("test".to_string())
+                            String("-m"),
+                            String("cognitect.test-runner"),
+                            String("-d"),
+                            String("test")
                         ),)
                     ))
                 ),)
@@ -1249,27 +1509,69 @@ mod tests {
     fn equality() {
         // Nil,
         assert_eq!(Nil, Nil);
-        assert_ne!(Nil, Keyword("Nil".to_string()));
+        assert_ne!(
+            Nil,
+            Keyword {
+                namespace: None,
+                name: "Nil"
+            }
+        );
 
         // Bool(bool),
         assert_eq!(Bool(true), Bool(true));
         assert_ne!(Bool(true), Bool(false));
 
         // String(&'a str),
-        assert_eq!(String("a".to_string()), String("a".to_string()));
-        assert_ne!(String("a".to_string()), String("z".to_string()));
+        assert_eq!(String("a"), String("a"));
+        assert_ne!(String("a"), String("z"));
 
         // Character(char),
         assert_eq!(Character('a'), Character('a'));
         assert_ne!(Character('a'), Character('b'));
 
         // Symbol(String),
-        assert_eq!(Symbol("a".to_string()), Symbol("a".to_string()));
-        assert_ne!(Symbol("a".to_string()), Symbol("z".to_string()));
+        assert_eq!(
+            Symbol {
+                namespace: None,
+                name: "a"
+            },
+            Symbol {
+                namespace: None,
+                name: "a"
+            }
+        );
+        assert_ne!(
+            Symbol {
+                namespace: None,
+                name: "a"
+            },
+            Symbol {
+                namespace: None,
+                name: "z"
+            }
+        );
 
         // Keyword(String),
-        assert_eq!(Keyword("a".to_string()), Keyword("a".to_string()));
-        assert_ne!(Keyword("a".to_string()), Keyword("z".to_string()));
+        assert_eq!(
+            Keyword {
+                namespace: None,
+                name: "a"
+            },
+            Keyword {
+                namespace: None,
+                name: "a"
+            }
+        );
+        assert_ne!(
+            Keyword {
+                namespace: None,
+                name: "a"
+            },
+            Keyword {
+                namespace: None,
+                name: "z"
+            }
+        );
 
         // Integer(isize),
         assert_eq!(Integer(1), Integer(1));
@@ -1306,26 +1608,62 @@ mod tests {
         // Map(HashMap<Edn<'a>, Edn<'a>>),
         assert_eq!(Map(hashmap!()), Map(hashmap!()));
         assert_eq!(
-            Map(hashmap!(Keyword("a".to_string()), Integer(1))),
-            Map(hashmap!(Keyword("a".to_string()), Integer(1)))
+            Map(hashmap!(
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
+                Integer(1)
+            )),
+            Map(hashmap!(
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
+                Integer(1)
+            ))
         );
         assert_eq!(
             Map(hashmap!(
-                Keyword("a".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
                 Integer(1),
-                Keyword("b".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "b"
+                },
                 Integer(2)
             )),
             Map(hashmap!(
-                Keyword("b".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "b"
+                },
                 Integer(2),
-                Keyword("a".to_string()),
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
                 Integer(1)
             ))
         );
         assert_ne!(
-            Map(hashmap!(Keyword("a".to_string()), Float(2.1.into()))),
-            Map(hashmap!(Keyword("a".to_string()), Float(1.2.into())))
+            Map(hashmap!(
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
+                Float(2.1.into())
+            )),
+            Map(hashmap!(
+                Keyword {
+                    namespace: None,
+                    name: "a"
+                },
+                Float(1.2.into())
+            ))
         );
 
         // Set(HashSet<Edn<'a>>),

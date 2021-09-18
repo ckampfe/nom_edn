@@ -5,15 +5,15 @@ authors = ["Clark Kampfe <clark.kampfe@gmail.com>"]
 edition = "2018"
 
 [features]
-default = ["im"]
+default = []
 
 [dependencies]
 chrono = "0.4"
 im = { version = "15.0", optional = true }
 im-rc = { version = "15.0", optional = true }
-nom = "6.0"
-ordered-float = "2.0"
-rust_decimal = "1.8"
+nom = "7.0"
+ordered-float = "2.8"
+rust_decimal = "1.16"
 uuid = "0.8"
 
 [dev-dependencies]
@@ -24,4 +24,5 @@ name = "bench"
 harness = false
 
 [profile.bench]
+codegen-units = 1
 lto = true
