@@ -27,7 +27,7 @@ jobs:
           key: v1-cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
           name: Test
-          command: cargo test --all && cargo test --no-default-features --features=im-rc
+          command: cargo test --all && cargo test --no-default-features --features=im && cargo test --no-default-features --features=im-rc
       - run:
           name: Benchmarks
           command: cargo bench || true
