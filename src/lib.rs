@@ -145,7 +145,7 @@ fn edn_int(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&
 
 fn edn_float(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, f) = alt((
-        map(pair(recognize(double), tag("M")), |(d, _): (&str, &str)| {
+        map(terminated(recognize(double), tag("M")), |d: &str| {
             Edn::Decimal(rust_decimal::Decimal::from_str(d).unwrap())
         }),
         map(nom::number::complete::double, |d| Edn::Float(d.into())),
