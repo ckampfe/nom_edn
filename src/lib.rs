@@ -130,28 +130,17 @@ fn edn_bool(s: &str) -> IResult<&str, crate::Edn, nom::error::VerboseError<&str>
 
 fn edn_int(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, i) = map(
-        pair(opt(alt((tag("+"), tag("-")))), digit1),
-        |(sign, digits): (Option<&str>, &str)| {
-            let i = if let Some(s) = sign {
-                let nstr = digits;
-                let n = nstr.parse::<isize>().unwrap();
-                if s == "-" {
-                    -n
-                } else {
-                    n
-                }
-            } else {
-                let nstr = digits;
-                nstr.parse::<isize>().unwrap()
-            };
-
-            Edn::Integer(i)
-        },
+        alt((
+            digit1,
+            recognize(pair(tag("-"), digit1)),
+            preceded(tag("+"), digit1),
+        )),
+        |digits: &str| digits.parse::<isize>().unwrap(),
     )(s)?;
 
     let (s, _) = not(tag("."))(s)?;
 
-    Ok((s, i))
+    Ok((s, Edn::Integer(i)))
 }
 
 fn edn_float(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
@@ -540,6 +529,18 @@ mod tests {
         let intstr = "1";
         let res = edn_int(intstr);
         assert_eq!(res, Ok(("", Integer(1))));
+
+        let intstr = "-1";
+        let res = edn_int(intstr);
+        assert_eq!(res, Ok(("", Integer(-1))));
+
+        let intstr = isize::MAX.to_string();
+        let res = edn_int(&intstr);
+        assert_eq!(res, Ok(("", Integer(isize::MAX))));
+
+        let intstr = isize::MIN.to_string();
+        let res = edn_int(&intstr);
+        assert_eq!(res, Ok(("", Integer(isize::MIN))));
     }
 
     #[test]
