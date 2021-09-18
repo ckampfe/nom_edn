@@ -444,7 +444,7 @@ mod tests {
     const DEPS_DOT_EDN: &str = include_str!("../fixtures/deps.edn");
     const ASCII_STL: &str = include_str!("../fixtures/ascii_stl.clj");
 
-    macro_rules! hashmap {
+    macro_rules! map {
         () => {
             crate::Map::new()
         };
@@ -461,7 +461,7 @@ mod tests {
         };
     }
 
-    macro_rules! hashset {
+    macro_rules! set {
         () => {
             crate::Set::new()
         };
@@ -903,7 +903,7 @@ mod tests {
             map_res,
             Ok((
                 "",
-                Map(hashmap!(
+                Map(map!(
                     Keyword {
                         namespace: None,
                         name: "a"
@@ -918,7 +918,7 @@ mod tests {
     fn map_empty() {
         let map_str = "{}";
         let map_res = edn_map(map_str);
-        assert_eq!(map_res, Ok(("", Map(hashmap!()))));
+        assert_eq!(map_res, Ok(("", Map(map!()))));
     }
 
     #[test]
@@ -929,7 +929,7 @@ mod tests {
             map_res,
             Ok((
                 "",
-                Map(hashmap!(
+                Map(map!(
                     Keyword {
                         namespace: None,
                         name: "a"
@@ -958,13 +958,13 @@ mod tests {
             (map_remaining, map_res),
             (
                 "",
-                Map(hashmap!(
+                Map(map!(
                     Vector(vec!(Integer(1), Integer(2), Integer(3))),
                     Keyword {
                         namespace: None,
                         name: "a"
                     },
-                    Map(hashmap!()),
+                    Map(map!()),
                     Keyword {
                         namespace: None,
                         name: "zzzzzzzz"
@@ -982,7 +982,7 @@ mod tests {
             set_res,
             Ok((
                 "",
-                Set(hashset!(
+                Set(set!(
                     Keyword {
                         namespace: None,
                         name: "a"
@@ -997,7 +997,7 @@ mod tests {
     fn set_empty() {
         let set_str = "#{}";
         let set_res = edn_set(set_str);
-        assert_eq!(set_res, Ok(("", Set(hashset!()))));
+        assert_eq!(set_res, Ok(("", Set(set!()))));
     }
 
     #[test]
@@ -1008,7 +1008,7 @@ mod tests {
             set_res,
             Ok((
                 "",
-                Set(hashset!(
+                Set(set!(
                     Keyword {
                         namespace: None,
                         name: "a"
@@ -1027,20 +1027,20 @@ mod tests {
             set_res,
             Ok((
                 "",
-                Set(hashset!(
+                Set(set!(
                     Vector(vec!(Integer(1), Integer(2), Integer(3))),
                     Keyword {
                         namespace: None,
                         name: "a"
                     },
-                    Map(hashmap!()),
+                    Map(map!()),
                     Keyword {
                         namespace: None,
                         name: "bcd"
                     },
-                    Set(hashset!()),
+                    Set(set!()),
                     Vector(vec!()),
-                    List(vec!(Integer(1), Integer(2), Set(hashset!()))),
+                    List(vec!(Integer(1), Integer(2), Set(set!()))),
                     Keyword {
                         namespace: None,
                         name: "zzzzzzzz"
@@ -1056,7 +1056,7 @@ mod tests {
         let set_res = edn_set(set_str);
         assert_eq!(
             set_res,
-            Ok(("", Set(hashset!(Integer(1), Integer(2), Integer(5)))))
+            Ok(("", Set(set!(Integer(1), Integer(2), Integer(5)))))
         );
     }
 
@@ -1066,7 +1066,7 @@ mod tests {
         let set_res = edn_set(set_str);
         assert_eq!(
             set_res,
-            Ok(("", Set(hashset!(Integer(1), Integer(2), Integer(5)))))
+            Ok(("", Set(set!(Integer(1), Integer(2), Integer(5)))))
         );
     }
 
@@ -1076,7 +1076,7 @@ mod tests {
         let set_res = edn_set(set_str);
         assert_eq!(
             set_res,
-            Ok(("", Set(hashset!(Integer(1), Integer(2), Integer(5)))))
+            Ok(("", Set(set!(Integer(1), Integer(2), Integer(5)))))
         );
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
             edn_map("{:a 1.01 #_:b #_38000 :c :d}"),
             Ok((
                 "",
-                Map(hashmap!(
+                Map(map!(
                     Keyword {
                         namespace: None,
                         name: "a"
@@ -1133,6 +1133,7 @@ mod tests {
             Ok(("", Edn::Tag(crate::Tag::Inst(inst))))
         );
     }
+
     #[test]
     fn tags_uuid() {
         let uuid = uuid::Uuid::from_str("f81d4fae-7dec-11d0-a765-00a0c91e6bf6").unwrap();
@@ -1305,7 +1306,7 @@ mod tests {
         // maps
         assert_eq!(
             edn_many!(",{,:a,1,,,,:b,2,}"),
-            vec![Map(hashmap![
+            vec![Map(map![
                 Keyword {
                     namespace: None,
                     name: "a"
@@ -1322,7 +1323,7 @@ mod tests {
         // set
         assert_eq!(
             edn_many!("#{,,,, 1 , 2, 3 ,         }"),
-            vec![Set(hashset![Integer(1), Integer(2), Integer(3)])]
+            vec![Set(set![Integer(1), Integer(2), Integer(3)])]
         );
     }
 
@@ -1336,7 +1337,7 @@ mod tests {
 
         assert_eq!(
             embedded_res,
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "paths"
@@ -1346,12 +1347,12 @@ mod tests {
                     namespace: None,
                     name: "deps"
                 },
-                Map(hashmap!(
+                Map(map!(
                     Symbol {
                         namespace: Some("org.clojure"),
                         name: "clojure"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1362,7 +1363,7 @@ mod tests {
                         namespace: None,
                         name: "instaparse".into()
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1373,7 +1374,7 @@ mod tests {
                         namespace: None,
                         name: "quil"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1392,7 +1393,7 @@ mod tests {
                         namespace: Some("com.hypirion"),
                         name: "clj-xchart"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1403,7 +1404,7 @@ mod tests {
                         namespace: Some("net.mikera"),
                         name: "core.matrix"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1414,7 +1415,7 @@ mod tests {
                         namespace: Some("net.mikera"),
                         name: "vectorz-clj"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: Some("mvn"),
                             name: "version"
@@ -1426,12 +1427,12 @@ mod tests {
                     namespace: None,
                     name: "aliases"
                 },
-                Map(hashmap!(
+                Map(map!(
                     Keyword {
                         namespace: None,
                         name: "more-mem"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: None,
                             name: "jvm-opts"
@@ -1442,7 +1443,7 @@ mod tests {
                         namespace: None,
                         name: "test"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: None,
                             name: "extra-paths"
@@ -1452,12 +1453,12 @@ mod tests {
                             namespace: None,
                             name: "extra-deps"
                         },
-                        Map(hashmap!(
+                        Map(map!(
                             Symbol {
                                 namespace: Some("org.clojure"),
                                 name: "test.check"
                             },
-                            Map(hashmap!(
+                            Map(map!(
                                 Keyword {
                                     namespace: Some("mvn"),
                                     name: "version"
@@ -1470,17 +1471,17 @@ mod tests {
                         namespace: None,
                         name: "runner"
                     },
-                    Map(hashmap!(
+                    Map(map!(
                         Keyword {
                             namespace: None,
                             name: "extra-deps"
                         },
-                        Map(hashmap!(
+                        Map(map!(
                             Symbol {
                                 namespace: Some("com.cognitect"),
                                 name: "test-runner"
                             },
-                            Map(hashmap!(
+                            Map(map!(
                                 Keyword {
                                     namespace: Some("git"),
                                     name: "url"
@@ -1610,16 +1611,16 @@ mod tests {
         assert_ne!(Vector(vec![Integer(1)]), List(vec![Integer(1)]));
 
         // Map(HashMap<Edn<'a>, Edn<'a>>),
-        assert_eq!(Map(hashmap!()), Map(hashmap!()));
+        assert_eq!(Map(map!()), Map(map!()));
         assert_eq!(
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "a"
                 },
                 Integer(1)
             )),
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "a"
@@ -1628,7 +1629,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "a"
@@ -1640,7 +1641,7 @@ mod tests {
                 },
                 Integer(2)
             )),
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "b"
@@ -1654,14 +1655,14 @@ mod tests {
             ))
         );
         assert_ne!(
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "a"
                 },
                 Float(2.1.into())
             )),
-            Map(hashmap!(
+            Map(map!(
                 Keyword {
                     namespace: None,
                     name: "a"
@@ -1671,9 +1672,9 @@ mod tests {
         );
 
         // Set(HashSet<Edn<'a>>),
-        assert_eq!(Set(hashset![Integer(1)]), Set(hashset![Integer(1)]));
-        assert_ne!(Set(hashset![Integer(1)]), Set(hashset![Integer(91391)]));
-        assert_ne!(Set(hashset![Integer(1)]), List(vec![]));
+        assert_eq!(Set(set![Integer(1)]), Set(set![Integer(1)]));
+        assert_ne!(Set(set![Integer(1)]), Set(set![Integer(91391)]));
+        assert_ne!(Set(set![Integer(1)]), List(vec![]));
     }
 
     #[test]
