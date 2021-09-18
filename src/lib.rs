@@ -49,7 +49,6 @@ pub enum Edn<'edn> {
     // capture comment data.
     Comment,
     Tag(Tag<'edn>),
-    // TODO: handle tagged elements
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
