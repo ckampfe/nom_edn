@@ -186,9 +186,9 @@ fn edn_char(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<
 fn edn_keyword(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     let (s, _) = tag(":")(s)?;
 
-    let mut optional_namespace = opt(terminated(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(terminated(identifier, tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = take_while1(matches_identifier)(s)?;
+    let (s, sym) = identifier(s)?;
 
     Ok((
         s,
@@ -202,9 +202,9 @@ fn edn_keyword(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseErr
 fn edn_symbol(s: &str) -> nom::IResult<&str, crate::Edn, nom::error::VerboseError<&str>> {
     peek(not(tag(":")))(s)?;
 
-    let mut optional_namespace = opt(terminated(take_while1(matches_identifier), tag("/")));
+    let mut optional_namespace = opt(terminated(identifier, tag("/")));
     let (s, namespace) = optional_namespace(s)?;
-    let (s, sym) = take_while1(matches_identifier)(s)?;
+    let (s, sym) = identifier(s)?;
 
     Ok((
         s,
@@ -347,11 +347,11 @@ fn edn_tag_uuid(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&
 }
 
 fn edn_tag_user_defined(s: &str) -> IResult<&str, crate::Tag, nom::error::VerboseError<&str>> {
-    let (s, prefix) = take_while1(matches_identifier)(s)?;
+    let (s, prefix) = identifier(s)?;
 
     let (s, _) = tag("/")(s)?;
 
-    let (s, name) = take_while1(matches_identifier)(s)?;
+    let (s, name) = identifier(s)?;
 
     let (s, _) = space_or_comma(s)?;
 
@@ -398,8 +398,11 @@ fn edn_any(s: &str) -> IResult<&str, Option<crate::Edn>, nom::error::VerboseErro
     Ok((s, edn))
 }
 
-#[inline]
-fn matches_identifier(c: char) -> bool {
+fn identifier(s: &str) -> nom::IResult<&str, &str, nom::error::VerboseError<&str>> {
+    take_while1(matches_identifier_char)(s)
+}
+
+fn matches_identifier_char(c: char) -> bool {
     is_alphanumeric(c as u8) || c == '-' || c == '_' || c == '.' || c == '+' || c == '&'
 }
 
