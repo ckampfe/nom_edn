@@ -10,5 +10,17 @@ fn deps_edn(c: &mut Criterion) {
     c.bench_function("deps.edn", move |b| b.iter(|| edn!(&edn)));
 }
 
-criterion_group!(benches, deps_edn);
+fn unicode_char_found(c: &mut Criterion) {
+    let chr = "\\u3F3A";
+
+    c.bench_function("unicode char found", move |b| b.iter(|| edn!(&chr)));
+}
+
+fn char_unfound(c: &mut Criterion) {
+    let chr = "\\u3Z3Z";
+
+    c.bench_function("unicode char unfound", move |b| b.iter(|| edn!(&chr)));
+}
+
+criterion_group!(benches, deps_edn, unicode_char_found, char_unfound);
 criterion_main!(benches);

@@ -409,6 +409,7 @@ fn matches_identifier_char(c: char) -> bool {
 fn hex_u32<'a, E: nom::error::ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, u32, E> {
     let (i, o) = take_while1(|chr| {
         let chr = chr as u8;
+        // 0-9, A-F, a-f
         (0x30..=0x39).contains(&chr) || (0x41..=0x46).contains(&chr) || (0x61..=0x66).contains(&chr)
     })(input)?;
 
