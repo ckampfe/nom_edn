@@ -17,7 +17,7 @@ rust_decimal = "1.16"
 uuid = "0.8"
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.4"
 
 [[bench]]
 name = "bench"
